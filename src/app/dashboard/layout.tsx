@@ -1,10 +1,27 @@
 "use client";
 
-import React, { useState } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Zap, MessageSquare, Settings, LogOut, Command, Bell, Menu, X } from 'lucide-react';
-import { createClient } from '@/utils/supabase/client';
+import { useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  LayoutDashboard,
+  Zap,
+  MessageSquare,
+  Settings,
+  LogOut,
+  Command,
+  Bell,
+  Menu,
+  X,
+} from "lucide-react";
+import { createClient } from "@/utils/supabase/client";
+
+const navItems = [
+  { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
+  { name: "Automation Flows", href: "/dashboard/workflows", icon: Zap },
+  { name: "Live Inbox", href: "/dashboard/inbox", icon: MessageSquare },
+  { name: "Settings", href: "/dashboard/settings", icon: Settings },
+];
 
 export default function DashboardLayout({
   children,
@@ -13,28 +30,38 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const supabase = createClient();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    router.push('/');
-  };
+    setIsSigningOut(true);
+    setSignOutError(null);
 
-  const navItems = [
-    { name: 'Overview', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Automation Flows', href: '/dashboard/flows', icon: Zap },
-    { name: 'Live Inbox', href: '/dashboard/inbox', icon: MessageSquare },
-    { name: 'Settings', href: '/dashboard/settings', icon: Settings },
-  ];
+    const { error } = await createClient().auth.signOut();
+    if (error) {
+      setSignOutError("Could not sign out. Please try again.");
+      setIsSigningOut(false);
+      console.error("Supabase sign out failed:", error.message);
+      return;
+    }
+
+    router.replace("/login");
+    router.refresh();
+  };
 
   const sidebarContent = (
     <>
-      <div className="h-16 flex items-center justify-between px-6 border-b border-white/10">
-        <div className="flex items-center gap-2 text-white font-bold text-xl tracking-tight">
-          <Command className="w-6 h-6 text-purple-500" />
+      <div className="flex h-16 items-center justify-between border-b border-white/10 px-6">
+        <Link
+          aria-label="IgHouse dashboard"
+          className="flex items-center gap-2 text-xl font-bold tracking-tight text-white"
+          href="/dashboard"
+          onClick={() => setMobileOpen(false)}
+        >
+          <Command aria-hidden="true" className="h-6 w-6 text-purple-500" />
           <span>IgHouse</span>
-        </div>
+        </Link>
         <button
           type="button"
           className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-300 md:hidden"
@@ -45,62 +72,88 @@ export default function DashboardLayout({
         </button>
       </div>
 
-      <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-        <p className="px-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
+      <nav aria-label="Workspace" className="flex-1 space-y-1 overflow-y-auto px-4 py-6">
+        <p className="mb-4 px-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
           Workspace
         </p>
         {navItems.map((item) => {
-          const isActive = pathname === item.href;
+          const isActive =
+            item.href === "/dashboard"
+              ? pathname === item.href
+              : pathname === item.href ||
+                pathname.startsWith(`${item.href}/`) ||
+                (item.href === "/dashboard/workflows" &&
+                  pathname.startsWith("/dashboard/flows"));
+
           return (
             <Link
               key={item.name}
               href={item.href}
+              aria-current={isActive ? "page" : undefined}
               onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
                 isActive
-                  ? 'bg-purple-500/10 text-purple-400'
-                  : 'text-gray-400 hover:text-gray-100 hover:bg-white/5'
+                  ? "bg-purple-500/10 text-purple-400"
+                  : "text-gray-400 hover:bg-white/5 hover:text-gray-100"
               }`}
             >
-              <item.icon className={`w-5 h-5 ${isActive ? 'text-purple-400' : 'text-gray-500'}`} />
+              <item.icon
+                aria-hidden="true"
+                className={`h-5 w-5 ${isActive ? "text-purple-400" : "text-gray-500"}`}
+              />
               {item.name}
             </Link>
           );
         })}
       </nav>
 
-      <div className="p-4 border-t border-white/10">
+      <div className="border-t border-white/10 p-4">
+        {signOutError && (
+          <p className="mb-2 px-3 text-xs text-red-400" role="alert">
+            {signOutError}
+          </p>
+        )}
         <button
+          type="button"
+          disabled={isSigningOut}
           onClick={handleSignOut}
-          className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-400 transition-all hover:bg-red-500/10 hover:text-red-400 disabled:cursor-wait disabled:opacity-60"
         >
-          <LogOut className="w-5 h-5" />
-          Sign Out
+          <LogOut aria-hidden="true" className="h-5 w-5" />
+          {isSigningOut ? "Signing out…" : "Sign Out"}
         </button>
       </div>
     </>
   );
 
   return (
-    <div className="flex h-screen bg-[#030712] text-gray-100 overflow-hidden font-sans">
-      <aside className="hidden w-64 flex-col border-r border-white/10 bg-[#09090b] md:flex">{sidebarContent}</aside>
+    <div className="flex h-screen overflow-hidden bg-[#030712] font-sans text-gray-100">
+      <aside className="hidden w-64 flex-col border-r border-white/10 bg-[#09090b] md:flex">
+        {sidebarContent}
+      </aside>
 
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden">
-          <div className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r border-white/10 bg-[#09090b] shadow-2xl">
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setMobileOpen(false);
+          }}
+        >
+          <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-white/10 bg-[#09090b] shadow-2xl">
             {sidebarContent}
           </div>
         </div>
       )}
 
-      <div className="flex flex-1 flex-col h-screen overflow-hidden relative">
-        <header className="h-16 border-b border-white/10 bg-[#09090b]/80 backdrop-blur-md flex items-center justify-between px-4 sm:px-6 sticky top-0 z-10">
+      <div className="relative flex h-screen flex-1 flex-col overflow-hidden">
+        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-white/10 bg-[#09090b]/80 px-4 backdrop-blur-md sm:px-6">
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-200 md:hidden"
               aria-label="Open navigation menu"
+              aria-expanded={mobileOpen}
             >
               <Menu className="h-4 w-4" />
             </button>
@@ -116,17 +169,24 @@ export default function DashboardLayout({
           </div>
 
           <div className="flex items-center gap-3 sm:gap-4">
-            <button className="relative rounded-full p-2 text-gray-400 transition-colors hover:bg-white/5 hover:text-white">
-              <Bell className="h-5 w-5" />
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full border border-[#09090b] bg-pink-500"></span>
+            <button
+              type="button"
+              aria-label="Notifications"
+              className="relative rounded-full p-2 text-gray-400 transition-colors hover:bg-white/5 hover:text-white"
+            >
+              <Bell aria-hidden="true" className="h-5 w-5" />
+              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full border border-[#09090b] bg-pink-500" />
             </button>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-purple-500 to-pink-500 text-xs font-bold shadow-lg sm:h-9 sm:w-9">
+            <div
+              aria-label="Account profile"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-purple-500 to-pink-500 text-xs font-bold shadow-lg sm:h-9 sm:w-9"
+            >
               ME
             </div>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="mx-auto max-w-6xl">{children}</div>
         </main>
       </div>

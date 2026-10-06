@@ -44,8 +44,8 @@ export default function DataDeletionPage() {
         <ol>
           <li>
             Email{" "}
-            <a href="mailto:privacy@ighouse.app?subject=IgHouse%20data%20deletion%20request">
-              privacy@ighouse.app
+            <a href="mailto:info@ighouse.app?subject=IgHouse%20data%20deletion%20request">
+              info@ighouse.app
             </a>{" "}
             from the email address associated with your IgHouse account.
           </li>
@@ -79,7 +79,7 @@ export default function DataDeletionPage() {
           fulfill it. If you want to keep using IgHouse with the same
           Instagram account, wait until you are ready to reconnect it before
           revoking access. For help with a deletion request, contact{" "}
-          <a href="mailto:privacy@ighouse.app">privacy@ighouse.app</a>.
+          <a href="mailto:info@ighouse.app">info@ighouse.app</a>.
         </p>
       </section>
     </LegalPage>

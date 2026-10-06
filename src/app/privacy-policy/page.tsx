@@ -121,7 +121,7 @@ export default function PrivacyPolicyPage() {
           You can disconnect Instagram access through Instagram&apos;s settings
           and request deletion of IgHouse data as described above. For privacy
           questions or requests, email{" "}
-          <a href="mailto:privacy@ighouse.app">privacy@ighouse.app</a>. Do not
+          <a href="mailto:info@ighouse.app">info@ighouse.app</a>. Do not
           email us your password or access token.
         </p>
       </section>

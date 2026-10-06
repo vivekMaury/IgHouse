@@ -127,7 +127,7 @@ export default function TermsOfServicePage() {
           change. We will post the updated terms here and revise the date
           above. Continued use after a change takes effect means you accept the
           updated terms. Questions about these terms may be sent to{" "}
-          <a href="mailto:privacy@ighouse.app">privacy@ighouse.app</a>.
+          <a href="mailto:info@ighouse.app">info@ighouse.app</a>.
         </p>
       </section>
     </LegalPage>
