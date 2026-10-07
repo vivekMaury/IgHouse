@@ -1,3 +1,4 @@
+// src/lib/workspaces/ensure-user-workspace.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export async function ensureUserWorkspace(
@@ -34,6 +35,7 @@ export async function ensureUserWorkspace(
       .eq("workspace_id", workspaceId)
       .eq("user_id", userId)
       .maybeSingle();
+
     if (membershipLookupError) throw membershipLookupError;
 
     if (!membership) {
@@ -44,6 +46,7 @@ export async function ensureUserWorkspace(
           user_id: userId,
           role: "owner",
         });
+
       if (membershipInsertError) throw membershipInsertError;
     }
 
