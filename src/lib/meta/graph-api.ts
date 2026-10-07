@@ -10,22 +10,43 @@ export type GraphApiOptions = {
 
 type GraphResponse = Record<string, unknown>;
 
-export function decryptPageAccessToken(encryptedToken: string) {
-  const encryptionKey = process.env.META_TOKEN_ENCRYPTION_KEY;
-  if (!encryptionKey) {
-    throw new Error('META_TOKEN_ENCRYPTION_KEY is required to decrypt the Instagram Page token.');
+function getPageTokenEncryptionKey(): Buffer {
+  const rawKey = process.env.META_TOKEN_ENCRYPTION_KEY ?? '';
+  const cleanKey = rawKey.trim().replace(/^["']|["']$/g, '');
+  if (!cleanKey) {
+    throw new Error('META_TOKEN_ENCRYPTION_KEY is required to encrypt or decrypt Instagram Page tokens.');
   }
 
+  if (/^[\da-f]{64}$/i.test(cleanKey)) {
+    return Buffer.from(cleanKey, 'hex');
+  }
+
+  if (cleanKey.length === 32) {
+    const key = Buffer.from(cleanKey, 'utf8');
+    if (key.length === 32) return key;
+  }
+
+  if (/^[A-Za-z0-9+/_-]{43}=?$/.test(cleanKey)) {
+    const normalizedBase64 = cleanKey.replace(/-/g, '+').replace(/_/g, '/');
+    const key = Buffer.from(normalizedBase64, 'base64');
+    const canonicalBase64 = key.toString('base64').replace(/=+$/, '');
+    if (
+      key.length === 32 &&
+      canonicalBase64 === normalizedBase64.replace(/=+$/, '')
+    ) {
+      return key;
+    }
+  }
+
+  throw new Error(
+    'META_TOKEN_ENCRYPTION_KEY must be a 64-character hex key, a 32-byte UTF-8 key, or a base64-encoded 32-byte key.',
+  );
+}
+
+export function decryptPageAccessToken(encryptedToken: string) {
   const [version, ivValue, authTagValue, ciphertextValue, ...extra] = encryptedToken.split('.');
   if (version !== 'v1' || !ivValue || !authTagValue || !ciphertextValue || extra.length > 0) {
     throw new Error('The stored Page token must use the v1 AES-256-GCM format.');
-  }
-
-  const key = /^[\da-f]{64}$/i.test(encryptionKey)
-    ? Buffer.from(encryptionKey, 'hex')
-    : Buffer.from(encryptionKey, 'base64');
-  if (key.length !== 32) {
-    throw new Error('META_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes.');
   }
 
   const iv = Buffer.from(ivValue, 'base64');
@@ -35,26 +56,14 @@ export function decryptPageAccessToken(encryptedToken: string) {
     throw new Error('The stored Page token has invalid AES-GCM components.');
   }
 
-  const decipher = createDecipheriv('aes-256-gcm', key, iv);
+  const decipher = createDecipheriv('aes-256-gcm', getPageTokenEncryptionKey(), iv);
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
 
 export function encryptPageAccessToken(accessToken: string) {
-  const encryptionKey = process.env.META_TOKEN_ENCRYPTION_KEY;
-  if (!encryptionKey) {
-    throw new Error('META_TOKEN_ENCRYPTION_KEY is required to encrypt the Instagram Page token.');
-  }
-
-  const key = /^[\da-f]{64}$/i.test(encryptionKey)
-    ? Buffer.from(encryptionKey, 'hex')
-    : Buffer.from(encryptionKey, 'base64');
-  if (key.length !== 32) {
-    throw new Error('META_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes.');
-  }
-
   const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const cipher = createCipheriv('aes-256-gcm', getPageTokenEncryptionKey(), iv);
   const ciphertext = Buffer.concat([cipher.update(accessToken, 'utf8'), cipher.final()]);
   return ['v1', iv.toString('base64'), cipher.getAuthTag().toString('base64'), ciphertext.toString('base64')].join('.');
 }
