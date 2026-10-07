@@ -22,6 +22,8 @@ type PageAccount = {
   instagram_business_account?: {
     id?: unknown;
     username?: unknown;
+    name?: unknown;
+    profile_picture_url?: unknown;
   } | null;
 };
 
@@ -124,19 +126,26 @@ export async function GET(request: NextRequest) {
       throw new Error(tokenBody.error?.message ?? "Meta did not return an access token.");
     }
 
-    const pagesUrl = new URL(
-      `https://graph.facebook.com/${graphApiVersion}/me/accounts`,
+    const pagesUrl = new URL("https://graph.facebook.com/v19.0/me/accounts");
+    pagesUrl.searchParams.set(
+      "fields",
+      "id,name,access_token,instagram_business_account{id,username,name,profile_picture_url}",
     );
-    pagesUrl.searchParams.set("fields", "id,name");
+    pagesUrl.searchParams.set("access_token", tokenBody.access_token);
     const pagesResponse = await fetch(pagesUrl, {
       headers: { Authorization: `Bearer ${tokenBody.access_token}` },
       cache: "no-store",
     });
     const pagesBody = (await pagesResponse.json()) as PageListResponse;
-    console.log(
-      "Instagram OAuth /me/accounts raw response:",
-      JSON.stringify(pagesBody),
-    );
+    const pagesForLog = Array.isArray(pagesBody.data)
+      ? {
+          ...pagesBody,
+          data: (pagesBody.data as PageAccount[]).map(
+            ({ access_token: _accessToken, ...page }) => page,
+          ),
+        }
+      : pagesBody;
+    console.log("Instagram OAuth /me/accounts raw response:", JSON.stringify(pagesForLog));
     if (!pagesResponse.ok || !Array.isArray(pagesBody.data)) {
       throw new Error(pagesBody.error?.message ?? "Meta could not return your Pages.");
     }
@@ -182,7 +191,10 @@ export async function GET(request: NextRequest) {
       const instagramUrl = new URL(
         `https://graph.facebook.com/${graphApiVersion}/${encodeURIComponent(page.id)}`,
       );
-      instagramUrl.searchParams.set("fields", "instagram_business_account");
+      instagramUrl.searchParams.set(
+        "fields",
+        "instagram_business_account{id,username,name,profile_picture_url}",
+      );
       const instagramResponse = await fetch(instagramUrl, {
         headers: { Authorization: `Bearer ${pageAccessToken}` },
         cache: "no-store",
@@ -236,6 +248,14 @@ export async function GET(request: NextRequest) {
       username:
         typeof page.instagram_business_account?.username === "string"
           ? page.instagram_business_account.username
+          : typeof page.instagram_business_account?.name === "string"
+            ? page.instagram_business_account.name
+            : typeof page.name === "string"
+              ? page.name
+              : page.id,
+      profile_picture_url:
+        typeof page.instagram_business_account?.profile_picture_url === "string"
+          ? page.instagram_business_account.profile_picture_url
           : null,
       access_token_encrypted: encryptPageAccessToken(page.access_token as string),
       is_active: true,

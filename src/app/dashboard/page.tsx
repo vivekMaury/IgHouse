@@ -9,6 +9,7 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { ConnectInstagramButton } from "@/components/dashboard/connect-instagram-button";
+import { formatInstagramAccountName } from "@/lib/meta/account-display";
 import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
 import { createClient } from "@/utils/supabase/server";
 
@@ -75,6 +76,7 @@ export default async function DashboardOverview({
     id: string;
     username: string | null;
     instagram_page_id: string;
+    profile_picture_url: string | null;
   }> = [];
   let executionCount = 0;
   let messageCount = 0;
@@ -98,7 +100,7 @@ export default async function DashboardOverview({
     ] = await Promise.all([
       supabase
         .from("ig_accounts")
-        .select("id, username, instagram_page_id")
+        .select("id, username, instagram_page_id, profile_picture_url")
         .eq("workspace_id", workspaceId)
         .eq("is_active", true),
       supabase
@@ -119,7 +121,7 @@ export default async function DashboardOverview({
         .from("workflows")
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", workspaceId)
-        .eq("status", "active"),
+        .eq("is_active", true),
       supabase
         .from("automation_logs")
         .select("id, event_type, status, created_at")
@@ -243,7 +245,7 @@ export default async function DashboardOverview({
               key={account.id}
               className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-sm text-emerald-300"
             >
-              {account.username ? `@${account.username}` : account.instagram_page_id}
+              {formatInstagramAccountName(account.username, account.id)}
             </span>
           ))}
         </section>

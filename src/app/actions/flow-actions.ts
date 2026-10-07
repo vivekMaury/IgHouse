@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/utils/supabase/server';
 
-export type WorkflowStatus = 'draft' | 'active';
+export type WorkflowStatus = 'draft' | 'published';
 
 export type FlowData = {
   nodes: Array<Record<string, unknown>>;
@@ -23,6 +23,7 @@ export type WorkflowRecord = {
   workspace_id: string;
   name: string;
   status: WorkflowStatus;
+  is_active: boolean;
   flow_data: FlowData;
   created_at: string;
   updated_at: string;
@@ -79,6 +80,7 @@ export async function saveWorkflow({
     workspace_id: effectiveWorkspaceId,
     name: name?.trim() || 'Untitled Workflow',
     status,
+    is_active: status === 'published',
     flow_data: normalizedFlowData,
     updated_at: new Date().toISOString(),
   };
@@ -117,6 +119,31 @@ export async function saveWorkflow({
       ...payload,
       created_at: new Date().toISOString(),
     })
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath('/dashboard/flows');
+  return data as WorkflowRecord;
+}
+
+export async function updateWorkflowActiveStatus(id: string, isActive: boolean) {
+  if (!id) {
+    throw new Error('A workflow ID is required to update its status.');
+  }
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('workflows')
+    .update({
+      is_active: isActive,
+      status: isActive ? 'published' : 'draft',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
     .select()
     .single();
 

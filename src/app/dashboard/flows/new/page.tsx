@@ -25,7 +25,12 @@ import '@xyflow/react/dist/style.css';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { nodeTypes as customNodeTypes } from '@/components/canvas/nodes';
-import { getWorkflowById, saveWorkflow, type FlowData } from '@/app/actions/flow-actions';
+import {
+  getWorkflowById,
+  saveWorkflow,
+  updateWorkflowActiveStatus,
+  type FlowData,
+} from '@/app/actions/flow-actions';
 import {
   ArrowLeft,
   Check,
@@ -282,6 +287,7 @@ function NewFlowPageContent() {
   const [flowTitle, setFlowTitle] = useState('Story Mention Auto-DM');
   const [isActive, setIsActive] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTogglingActive, setIsTogglingActive] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isPaletteCollapsed, setIsPaletteCollapsed] = useState(false);
@@ -327,7 +333,7 @@ function NewFlowPageContent() {
           setFlowTitle(record.name);
         }
 
-        setIsActive(record.status === 'active');
+        setIsActive(record.status === 'published' && record.is_active);
       } catch (error) {
         console.error('Failed to load workflow', error);
         setToast({ type: 'error', message: 'Unable to load this workflow.' });
@@ -441,7 +447,7 @@ function NewFlowPageContent() {
           nodes,
           edges,
         },
-        status: isActive ? 'active' : 'draft',
+        status: isActive ? 'published' : 'draft',
       });
 
       const nextWorkflowId = typeof savedFlow?.id === 'string' ? savedFlow.id : workflowId;
@@ -463,6 +469,33 @@ function NewFlowPageContent() {
       setIsSaving(false);
     }
   }, [edges, flowTitle, isActive, nodes, router, workflowId]);
+
+  const handleToggleActiveStatus = useCallback(async () => {
+    const nextActiveState = !isActive;
+    setIsActive(nextActiveState);
+
+    if (!workflowId) {
+      return;
+    }
+
+    setIsTogglingActive(true);
+    try {
+      await updateWorkflowActiveStatus(workflowId, nextActiveState);
+      setToast({
+        type: 'success',
+        message: nextActiveState ? 'Workflow published.' : 'Workflow moved to draft.',
+      });
+    } catch (error) {
+      console.error('Failed to update workflow status', error);
+      setIsActive(!nextActiveState);
+      setToast({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Unable to update workflow status.',
+      });
+    } finally {
+      setIsTogglingActive(false);
+    }
+  }, [isActive, workflowId]);
 
   const statusBadge = useMemo(
     () =>
@@ -506,7 +539,8 @@ function NewFlowPageContent() {
         <div className="flex items-center gap-2 sm:gap-3">
           <button
             type="button"
-            onClick={() => setIsActive((value) => !value)}
+            onClick={handleToggleActiveStatus}
+            disabled={isSaving || isTogglingActive}
             className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-colors sm:gap-2 sm:px-3 sm:py-2 sm:text-sm ${statusBadge}`}
           >
             {isActive ? <Play className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> : <Pause className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}

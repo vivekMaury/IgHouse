@@ -100,15 +100,15 @@ export default function FlowCanvasPage({ params }: { params: { id: string } }) {
   const saveFlow = async () => {
     if (!reactFlowInstance) return;
     setIsSaving(true);
-    
-    const flowData = reactFlowInstance.toObject();
-    
+
     try {
+      const flowData = reactFlowInstance.toObject();
+
       if (params.id === 'new') {
         // Here you would typically insert a new flow
         console.log("Saving new flow", flowData);
       } else {
-        await supabase
+        const { error } = await supabase
           .from('flows')
           .update({ 
             nodes_json: flowData,
@@ -116,6 +116,8 @@ export default function FlowCanvasPage({ params }: { params: { id: string } }) {
             updated_at: new Date().toISOString()
           })
           .eq('id', params.id);
+
+        if (error) throw error;
       }
       // Consider replacing alert with a nice toast notification
       alert('Flow saved successfully!');
@@ -124,6 +126,26 @@ export default function FlowCanvasPage({ params }: { params: { id: string } }) {
       alert('Error saving flow.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const toggleActiveStatus = async () => {
+    const nextActiveState = !isActive;
+    setIsActive(nextActiveState);
+
+    if (params.id === 'new') return;
+
+    try {
+      const { error } = await supabase
+        .from('flows')
+        .update({ is_active: nextActiveState })
+        .eq('id', params.id);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error updating flow status:', err);
+      setIsActive(!nextActiveState);
+      alert('Error updating flow status.');
     }
   };
 
@@ -139,7 +161,7 @@ export default function FlowCanvasPage({ params }: { params: { id: string } }) {
         </div>
         <div className="flex items-center gap-3">
           <button 
-            onClick={() => setIsActive(!isActive)}
+            onClick={toggleActiveStatus}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
               isActive 
                 ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800' 

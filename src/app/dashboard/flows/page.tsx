@@ -82,7 +82,7 @@ export default function FlowsPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {flows.map((flow) => {
-            const isActive = flow.status === 'active';
+            const isActive = flow.status === 'published' && flow.is_active === true;
             const nodeCount = Array.isArray(flow.flow_data?.nodes) ? flow.flow_data.nodes.length : 0;
 
             return (
@@ -102,7 +102,7 @@ export default function FlowsPage() {
                           : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
                       }`}
                     >
-                      {isActive ? 'Active' : 'Draft'}
+                      {isActive ? 'Published' : 'Draft'}
                     </span>
                   </div>
                 </div>

@@ -576,7 +576,7 @@ export async function evaluateWorkflow(eventPayload: Record<string, unknown>) {
       .from('workflows')
       .select('id, workspace_id, flow_data')
       .eq('workspace_id', account.workspace_id)
-      .eq('status', 'active');
+      .eq('is_active', true);
     if (workflowError) throw workflowError;
 
     const userId = await resolveWorkspaceUser(supabase, account.workspace_id as string);
