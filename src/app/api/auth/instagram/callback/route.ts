@@ -77,7 +77,7 @@ async function resolveOAuthWorkspace(
     const { data: createdWorkspace, error: insertError } = await userClient
       .from("workspaces")
       .insert([{ name: "Personal Workspace", owner_id: userId }])
-      .select("id")
+      .select("*")
       .single();
 
     if (insertError) {
@@ -89,17 +89,31 @@ async function resolveOAuthWorkspace(
 
   if (!workspace?.id) {
     const adminClient = createAdminClient();
-    const { data: resolvedId, error: resolveError } = await adminClient.rpc(
-      "ensure_user_workspace",
-      { target_user_id: userId },
-    );
-    if (resolveError) {
-      throw new Error(`Unable to resolve a valid workspace: ${resolveError.message}`);
+    const { data: adminWorkspace, error: adminLookupError } = await adminClient
+      .from("workspaces")
+      .select("*")
+      .eq("owner_id", userId)
+      .maybeSingle();
+    if (adminLookupError) {
+      throw new Error(`Unable to look up a workspace: ${adminLookupError.message}`);
     }
-    if (typeof resolvedId !== "string" || !resolvedId) {
-      throw new Error("Workspace resolution did not return a valid workspace ID.");
+
+    workspace = adminWorkspace;
+    if (!workspace) {
+      const { data: adminCreatedWorkspace, error: adminInsertError } =
+        await adminClient
+          .from("workspaces")
+          .insert([{ name: "Personal Workspace", owner_id: userId }])
+          .select("*")
+          .single();
+      if (adminInsertError) {
+        throw new Error(`Unable to create a workspace: ${adminInsertError.message}`);
+      }
+      workspace = adminCreatedWorkspace;
     }
-    workspace = { id: resolvedId };
+    if (!workspace?.id) {
+      throw new Error("Workspace lookup or creation did not return a valid workspace ID.");
+    }
   }
 
   const { data: membership, error: membershipLookupError } = await userClient
