@@ -54,10 +54,10 @@ export default async function DashboardOverview({
     error: userError,
   } = await supabase.auth.getUser();
 
+  if (!user) redirect("/login");
   if (userError) {
     throw new Error(`Unable to load dashboard account: ${userError.message}`);
   }
-  if (!user) redirect("/login");
 
   const workspaceId = await ensureUserWorkspace(user.id, supabase);
 
