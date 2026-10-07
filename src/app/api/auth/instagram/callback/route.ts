@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { encryptPageAccessToken } from "@/lib/meta/graph-api";
+import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
 import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";
@@ -222,19 +223,10 @@ export async function GET(request: NextRequest) {
       return redirectToDashboard(request, "error", "no_instagram_account");
     }
 
-    const { data: membership, error: membershipError } = await supabase
-      .from("workspace_members")
-      .select("workspace_id")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
-    if (membershipError) throw membershipError;
-    if (!membership?.workspace_id) {
-      return redirectToDashboard(request, "error", "no_workspace");
-    }
+    const workspaceId = await ensureUserWorkspace(user.id, supabase);
 
     const accounts = instagramPages.map((page) => ({
-      workspace_id: membership.workspace_id,
+      workspace_id: workspaceId,
       instagram_page_id: page.id as string,
       username:
         typeof page.instagram_business_account?.username === "string"

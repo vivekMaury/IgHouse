@@ -9,6 +9,7 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { ConnectInstagramButton } from "@/components/dashboard/connect-instagram-button";
+import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
 import { createClient } from "@/utils/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -55,16 +56,7 @@ export default async function DashboardOverview({
   }
   if (!user) redirect("/login");
 
-  const { data: membership, error: membershipError } = await supabase
-    .from("workspace_members")
-    .select("workspace_id")
-    .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
-
-  if (membershipError) {
-    throw new Error(`Unable to load dashboard workspace: ${membershipError.message}`);
-  }
+  const workspaceId = await ensureUserWorkspace(user.id, supabase);
 
   let connectedAccounts: Array<{
     id: string;
@@ -82,7 +74,7 @@ export default async function DashboardOverview({
     created_at: string;
   }> = [];
 
-  if (membership?.workspace_id) {
+  if (workspaceId) {
     const [
       accountsResult,
       executionResult,
@@ -94,7 +86,7 @@ export default async function DashboardOverview({
       supabase
         .from("ig_accounts")
         .select("id, username, instagram_page_id")
-        .eq("workspace_id", membership.workspace_id)
+        .eq("workspace_id", workspaceId)
         .eq("is_active", true),
       supabase
         .from("automation_logs")
@@ -113,7 +105,7 @@ export default async function DashboardOverview({
       supabase
         .from("workflows")
         .select("id", { count: "exact", head: true })
-        .eq("workspace_id", membership.workspace_id)
+        .eq("workspace_id", workspaceId)
         .eq("status", "active"),
       supabase
         .from("automation_logs")
