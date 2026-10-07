@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { encryptPageAccessToken } from "@/lib/meta/graph-api";
-import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";
@@ -37,7 +37,7 @@ type PageInstagramResponse = {
 
 function redirectToDashboard(
   request: NextRequest,
-  status: "connected" | "error",
+  status: "connected" | "success" | "error",
   reason?: string,
 ) {
   const destination = new URL("/dashboard", request.url);
@@ -53,6 +53,75 @@ function redirectToDashboard(
     maxAge: 0,
   });
   return response;
+}
+
+async function resolveOAuthWorkspace(
+  userClient: ReturnType<typeof createClient>,
+  userId: string,
+) {
+  let workspace: { id: string } | null = null;
+
+  const { data: existingWorkspace, error: lookupError } = await userClient
+    .from("workspaces")
+    .select("id")
+    .eq("owner_id", userId)
+    .maybeSingle();
+
+  if (lookupError) {
+    console.error("[IG_AUTH_WORKSPACE_LOOKUP_ERROR]:", lookupError);
+  } else {
+    workspace = existingWorkspace;
+  }
+
+  if (!workspace) {
+    const { data: createdWorkspace, error: insertError } = await userClient
+      .from("workspaces")
+      .insert([{ name: "Personal Workspace", owner_id: userId }])
+      .select("id")
+      .single();
+
+    if (insertError) {
+      console.error("[IG_AUTH_WORKSPACE_CREATE_ERROR]:", insertError);
+    } else {
+      workspace = createdWorkspace;
+    }
+  }
+
+  if (!workspace?.id) {
+    const adminClient = createAdminClient();
+    const { data: resolvedId, error: resolveError } = await adminClient.rpc(
+      "ensure_user_workspace",
+      { target_user_id: userId },
+    );
+    if (resolveError) {
+      throw new Error(`Unable to resolve a valid workspace: ${resolveError.message}`);
+    }
+    if (typeof resolvedId !== "string" || !resolvedId) {
+      throw new Error("Workspace resolution did not return a valid workspace ID.");
+    }
+    workspace = { id: resolvedId };
+  }
+
+  const { data: membership, error: membershipLookupError } = await userClient
+    .from("workspace_members")
+    .select("id")
+    .eq("workspace_id", workspace.id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (membershipLookupError) throw membershipLookupError;
+
+  if (!membership) {
+    const { error: membershipInsertError } = await userClient
+      .from("workspace_members")
+      .insert({
+        workspace_id: workspace.id,
+        user_id: userId,
+        role: "owner",
+      });
+    if (membershipInsertError) throw membershipInsertError;
+  }
+
+  return workspace.id;
 }
 
 function isMatchingState(expected: string | undefined, received: string | null) {
@@ -225,10 +294,7 @@ export async function GET(request: NextRequest) {
       return redirectToDashboard(request, "error", "no_instagram_account");
     }
 
-    const workspaceId = await ensureUserWorkspace(user.id, supabase);
-    if (!workspaceId) {
-      return redirectToDashboard(request, "error", "workspace_unavailable");
-    }
+    const workspaceId = await resolveOAuthWorkspace(supabase, user.id);
 
     const accounts = instagramPages.map((page) => ({
       workspace_id: workspaceId,
@@ -246,7 +312,7 @@ export async function GET(request: NextRequest) {
       .upsert(accounts, { onConflict: "instagram_page_id" });
     if (saveError) throw saveError;
 
-    return redirectToDashboard(request, "connected");
+    return redirectToDashboard(request, "success");
   } catch (error) {
     console.error("[IG_AUTH_ERROR]:", error);
     const message = error instanceof Error ? error.message : "Unknown Instagram connection error.";

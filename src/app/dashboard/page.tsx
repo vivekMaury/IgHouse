@@ -259,7 +259,8 @@ export default async function DashboardOverview({
         </div>
       </div>
 
-      {searchParams?.instagram === "connected" && (
+      {(searchParams?.instagram === "connected" ||
+        searchParams?.instagram === "success") && (
         <div
           className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200"
           role="status"
