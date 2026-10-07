@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { encryptPageAccessToken } from "@/lib/meta/graph-api";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
 import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";
@@ -53,89 +53,6 @@ function redirectToDashboard(
     maxAge: 0,
   });
   return response;
-}
-
-async function resolveOAuthWorkspace(
-  userClient: ReturnType<typeof createClient>,
-  userId: string,
-) {
-  let workspace: { id: string } | null = null;
-
-  const { data: existingWorkspace, error: lookupError } = await userClient
-    .from("workspaces")
-    .select("id")
-    .eq("owner_id", userId)
-    .maybeSingle();
-
-  if (lookupError) {
-    console.error("[IG_AUTH_WORKSPACE_LOOKUP_ERROR]:", lookupError);
-  } else {
-    workspace = existingWorkspace;
-  }
-
-  if (!workspace) {
-    const { data: createdWorkspace, error: insertError } = await userClient
-      .from("workspaces")
-      .insert([{ name: "Personal Workspace", owner_id: userId }])
-      .select("*")
-      .single();
-
-    if (insertError) {
-      console.error("[IG_AUTH_WORKSPACE_CREATE_ERROR]:", insertError);
-    } else {
-      workspace = createdWorkspace;
-    }
-  }
-
-  if (!workspace?.id) {
-    const adminClient = createAdminClient();
-    const { data: adminWorkspace, error: adminLookupError } = await adminClient
-      .from("workspaces")
-      .select("*")
-      .eq("owner_id", userId)
-      .maybeSingle();
-    if (adminLookupError) {
-      throw new Error(`Unable to look up a workspace: ${adminLookupError.message}`);
-    }
-
-    workspace = adminWorkspace;
-    if (!workspace) {
-      const { data: adminCreatedWorkspace, error: adminInsertError } =
-        await adminClient
-          .from("workspaces")
-          .insert([{ name: "Personal Workspace", owner_id: userId }])
-          .select("*")
-          .single();
-      if (adminInsertError) {
-        throw new Error(`Unable to create a workspace: ${adminInsertError.message}`);
-      }
-      workspace = adminCreatedWorkspace;
-    }
-    if (!workspace?.id) {
-      throw new Error("Workspace lookup or creation did not return a valid workspace ID.");
-    }
-  }
-
-  const { data: membership, error: membershipLookupError } = await userClient
-    .from("workspace_members")
-    .select("id")
-    .eq("workspace_id", workspace.id)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (membershipLookupError) throw membershipLookupError;
-
-  if (!membership) {
-    const { error: membershipInsertError } = await userClient
-      .from("workspace_members")
-      .insert({
-        workspace_id: workspace.id,
-        user_id: userId,
-        role: "owner",
-      });
-    if (membershipInsertError) throw membershipInsertError;
-  }
-
-  return workspace.id;
 }
 
 function isMatchingState(expected: string | undefined, received: string | null) {
@@ -308,7 +225,10 @@ export async function GET(request: NextRequest) {
       return redirectToDashboard(request, "error", "no_instagram_account");
     }
 
-    const workspaceId = await resolveOAuthWorkspace(supabase, user.id);
+    const workspaceId = await ensureUserWorkspace(user.id);
+    if (!workspaceId) {
+      throw new Error("Could not resolve or create a workspace for this account.");
+    }
 
     const accounts = instagramPages.map((page) => ({
       workspace_id: workspaceId,

@@ -9,6 +9,7 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { ConnectInstagramButton } from "@/components/dashboard/connect-instagram-button";
+import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
 import { createClient } from "@/utils/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -56,67 +57,19 @@ export default async function DashboardOverview({
     throw new Error(`Unable to load dashboard account: ${userError.message}`);
   }
 
-  let activeWorkspace: {
+  const resolvedWorkspaceId = await ensureUserWorkspace(user.id);
+  const activeWorkspace: {
     id: string;
     name: string;
     owner_id: string;
     plan?: string;
   } = {
-    id: user.id,
+    id: resolvedWorkspaceId ?? user.id,
     name: "Personal Workspace",
     owner_id: user.id,
     plan: "Pro Plan",
   };
-
-  try {
-    const { data: userWorkspaces, error: workspaceLookupError } = await supabase
-      .from("workspaces")
-      .select("id, name, owner_id")
-      .limit(1);
-
-    if (workspaceLookupError) {
-      console.error("Dashboard workspace lookup failed:", workspaceLookupError);
-    }
-
-    if (userWorkspaces && userWorkspaces.length > 0) {
-      activeWorkspace = userWorkspaces[0];
-    } else {
-      const { data: createdWorkspace, error: workspaceInsertError } = await supabase
-        .from("workspaces")
-        .insert([{ name: "Personal Workspace", owner_id: user.id }])
-        .select("id, name, owner_id")
-        .single();
-
-      if (workspaceInsertError) {
-        console.error("Dashboard personal workspace creation failed:", workspaceInsertError);
-      } else if (createdWorkspace) {
-        activeWorkspace = createdWorkspace;
-      }
-    }
-  } catch (error) {
-    console.error("Dashboard workspace resolution failed:", error);
-  }
-
-  const workspaceId = activeWorkspace.id;
-
-  try {
-    const { data: membership, error: membershipLookupError } = await supabase
-      .from("workspace_members")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (membershipLookupError) throw membershipLookupError;
-    if (!membership) {
-      const { error: membershipInsertError } = await supabase
-        .from("workspace_members")
-        .insert({ workspace_id: workspaceId, user_id: user.id, role: "owner" });
-      if (membershipInsertError) throw membershipInsertError;
-    }
-  } catch (error) {
-    console.error("Dashboard workspace membership resolution failed:", error);
-  }
+  const workspaceId = resolvedWorkspaceId;
 
   let connectedAccounts: Array<{
     id: string;

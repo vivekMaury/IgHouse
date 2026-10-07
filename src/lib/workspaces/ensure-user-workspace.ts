@@ -1,56 +1,48 @@
-// src/lib/workspaces/ensure-user-workspace.ts
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function ensureUserWorkspace(
-  userId: string,
-  userClient: SupabaseClient,
-): Promise<string | null> {
+export async function ensureUserWorkspace(userId: string): Promise<string | null> {
   try {
-    const { data: existingWorkspace, error: lookupError } = await userClient
-      .from("workspaces")
-      .select("id, name, owner_id")
-      .eq("owner_id", userId)
-      .maybeSingle();
-
-    if (lookupError) throw lookupError;
-
-    let workspaceId = existingWorkspace?.id;
-    if (!workspaceId) {
-      const { data: createdWorkspace, error: createError } = await userClient
-        .from("workspaces")
-        .insert({ name: "Personal Workspace", owner_id: userId })
-        .select("id, name, owner_id")
-        .single();
-
-      if (createError) throw createError;
-      if (!createdWorkspace?.id) {
-        throw new Error("Workspace creation did not return a workspace ID.");
-      }
-      workspaceId = createdWorkspace.id;
-    }
-
-    const { data: membership, error: membershipLookupError } = await userClient
+    const supabase = createAdminClient();
+    const { data: membership, error: membershipError } = await supabase
       .from("workspace_members")
-      .select("id")
-      .eq("workspace_id", workspaceId)
+      .select("workspace_id")
       .eq("user_id", userId)
+      .order("created_at", { ascending: true })
+      .limit(1)
       .maybeSingle();
 
-    if (membershipLookupError) throw membershipLookupError;
+    if (membershipError) throw membershipError;
 
-    if (!membership) {
-      const { error: membershipInsertError } = await userClient
-        .from("workspace_members")
-        .insert({
-          workspace_id: workspaceId,
-          user_id: userId,
-          role: "owner",
-        });
-
-      if (membershipInsertError) throw membershipInsertError;
+    if (membership?.workspace_id) {
+      const { data: workspace, error: workspaceError } = await supabase
+        .from("workspaces")
+        .select("id")
+        .eq("id", membership.workspace_id)
+        .maybeSingle();
+      if (workspaceError) throw workspaceError;
+      if (workspace?.id) return workspace.id;
     }
 
-    return workspaceId;
+    const { data: workspace, error: createError } = await supabase
+      .from("workspaces")
+      .insert({ name: "Personal Workspace" })
+      .select("id")
+      .single();
+    if (createError) throw createError;
+    if (!workspace?.id) {
+      throw new Error("Workspace creation did not return a workspace ID.");
+    }
+
+    const { error: addMemberError } = await supabase
+      .from("workspace_members")
+      .insert({
+        workspace_id: workspace.id,
+        user_id: userId,
+        role: "owner",
+      });
+    if (addMemberError) throw addMemberError;
+
+    return workspace.id;
   } catch (error) {
     console.error("[WORKSPACE_RESOLUTION_ERROR]:", error);
     return null;
