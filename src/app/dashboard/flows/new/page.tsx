@@ -41,6 +41,7 @@ import {
   Save,
   Sparkles,
   TimerReset,
+  UserRound,
   X,
   Zap,
 } from 'lucide-react';
@@ -100,6 +101,13 @@ const paletteItems = [
     label: 'Has email',
     subtitle: 'Condition Node',
     icon: Check,
+    accent: 'from-emerald-500 to-teal-500',
+  },
+  {
+    type: 'lead_capture',
+    label: 'Capture Lead',
+    subtitle: 'Lead Capture Node',
+    icon: UserRound,
     accent: 'from-emerald-500 to-teal-500',
   },
   {
@@ -179,6 +187,14 @@ const createNodeFromType = (type: string, position: { x: number; y: number }, id
         label: 'Wait 5 mins',
         subtitle: 'Delay Node',
         accent: 'from-rose-500 to-pink-500',
+      },
+    },
+    lead_capture: {
+      type: 'lead_capture',
+      data: {
+        label: 'Capture Lead',
+        subtitle: 'Lead Capture Node',
+        accent: 'from-emerald-500 to-teal-500',
       },
     },
   };

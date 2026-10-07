@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 type DashboardSettingsPageProps = {
   searchParams?: {
     instagram?: string;
+    integration?: string;
   };
 };
 
@@ -27,7 +28,7 @@ export default async function DashboardSettingsPage({
 
   const { data: membership, error: membershipError } = await supabase
     .from("workspace_members")
-    .select("workspace_id")
+    .select("workspace_id, role")
     .eq("user_id", user.id)
     .limit(1)
     .maybeSingle();
@@ -60,6 +61,22 @@ export default async function DashboardSettingsPage({
   }
   if (workspaceError) {
     throw new Error(`Unable to load workspace profile: ${workspaceError.message}`);
+  }
+
+  const canManageIntegrations =
+    membership?.role === "owner" || membership?.role === "admin";
+  const { data: integrations, error: integrationsError } =
+    membership?.workspace_id && canManageIntegrations
+      ? await supabase
+          .from("workspace_integrations")
+          .select(
+            "webhook_url, google_apps_script_url, google_sheets_spreadsheet_id, shared_secret_token",
+          )
+          .eq("workspace_id", membership.workspace_id)
+          .maybeSingle()
+      : { data: null, error: null };
+  if (integrationsError) {
+    throw new Error(`Unable to load workspace integrations: ${integrationsError.message}`);
   }
 
   const instagramStatus = searchParams?.instagram;
@@ -97,6 +114,15 @@ export default async function DashboardSettingsPage({
         </p>
       )}
 
+      {searchParams?.integration === "saved" && (
+        <p
+          className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200"
+          role="status"
+        >
+          Workspace integrations saved.
+        </p>
+      )}
+
       <SettingsTabs
         accounts={accounts ?? []}
         appIdConfigured={Boolean(
@@ -105,6 +131,11 @@ export default async function DashboardSettingsPage({
         webhookConfigured={Boolean(process.env.META_VERIFY_TOKEN)}
         email={user.email ?? "No email address"}
         workspaceName={workspace?.name ?? "Workspace"}
+        canManageIntegrations={canManageIntegrations}
+        webhookUrl={integrations?.webhook_url ?? ""}
+        googleAppsScriptUrl={integrations?.google_apps_script_url ?? ""}
+        spreadsheetId={integrations?.google_sheets_spreadsheet_id ?? ""}
+        sharedSecretConfigured={Boolean(integrations?.shared_secret_token)}
       />
     </div>
   );

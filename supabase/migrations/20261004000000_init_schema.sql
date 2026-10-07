@@ -49,7 +49,7 @@ CREATE TABLE contacts (
 
 -- Table: flows
 CREATE TABLE flows (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     ig_account_id UUID REFERENCES ig_accounts(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     trigger_type TEXT NOT NULL, -- e.g., 'comment', 'dm_keyword', 'story_mention'
@@ -61,7 +61,7 @@ CREATE TABLE flows (
 
 -- Table: conversations
 CREATE TABLE conversations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
     direction TEXT CHECK (direction IN ('inbound', 'outbound')),
     message_body TEXT,

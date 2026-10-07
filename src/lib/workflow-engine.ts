@@ -6,6 +6,8 @@ import {
   sendInstagramDM,
   sendPrivateDMFromComment,
 } from '@/lib/meta/graph-api';
+import type { GraphApiOptions } from '@/lib/meta/graph-api';
+import { validateExternalHttpsUrl } from '@/lib/integrations/urls';
 import { getRedisClient } from '@/lib/queue/upstash';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -16,6 +18,7 @@ export type InstagramEvent = {
   senderId: string;
   eventType: InstagramEventType;
   textContent: string;
+  userHandle: string | null;
   mediaId: string | null;
   postId: string | null;
   commentId: string | null;
@@ -69,6 +72,7 @@ export function extractInstagramEvents(payload: Record<string, unknown>): Instag
           senderId,
           eventType: 'comment',
           textContent: textValue(value.text),
+          userHandle: textValue(asRecord(value.from).username) || null,
           mediaId,
           postId: mediaId,
           commentId,
@@ -80,7 +84,8 @@ export function extractInstagramEvents(payload: Record<string, unknown>): Instag
     if (Array.isArray(entry.messaging)) {
       for (const rawMessagingEvent of entry.messaging) {
         const messagingEvent = asRecord(rawMessagingEvent);
-        const senderId = textValue(asRecord(messagingEvent.sender).id);
+        const sender = asRecord(messagingEvent.sender);
+        const senderId = textValue(sender.id);
         const message = asRecord(messagingEvent.message);
         if (!senderId || senderId === instagramAccountId || !Object.keys(message).length) continue;
 
@@ -93,6 +98,7 @@ export function extractInstagramEvents(payload: Record<string, unknown>): Instag
           senderId,
           eventType,
           textContent: textValue(message.text),
+          userHandle: textValue(sender.username) || textValue(sender.name) || null,
           mediaId: null,
           postId: null,
           commentId: null,
@@ -172,7 +178,7 @@ function reachableActions(flow: FlowData, triggerId: string, event: InstagramEve
       const matched = conditionMatches(node, event);
       if (next.sourceHandle && next.sourceHandle !== String(matched)) continue;
     }
-    if (node.type === 'message') actions.push(node);
+    if (node.type === 'message' || node.type === 'lead_capture') actions.push(node);
 
     for (const edge of flow.edges) {
       if (edge.source === next.id) {
@@ -244,6 +250,183 @@ async function resolveWorkspaceUser(supabase: ReturnType<typeof createAdminClien
   return memberResult.data.user_id as string;
 }
 
+function extractLeadContact(text: string) {
+  const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? null;
+  const phoneCandidate = text.match(/\+?\d(?:[\d\s().-]{5,}\d)(?:\s*(?:ext\.?|x)\s*\d{1,6})?/i)?.[0] ?? null;
+  const phoneDigits = phoneCandidate?.replace(/\D/g, '') ?? '';
+  const phone = phoneDigits.length >= 7 && phoneDigits.length <= 15
+    ? phoneCandidate?.trim() ?? null
+    : null;
+
+  return { email, phone };
+}
+
+async function saveCapturedLead(
+  supabase: ReturnType<typeof createAdminClient>,
+  account: { id: string; workspace_id: string },
+  event: InstagramEvent,
+  email: string | null,
+  phone: string | null,
+) {
+  let userHandle = event.userHandle;
+  if (!userHandle) {
+    const { data: contact, error: contactError } = await supabase
+      .from('contacts')
+      .select('username')
+      .eq('ig_account_id', account.id)
+      .eq('ig_scoped_user_id', event.senderId)
+      .maybeSingle();
+    if (contactError) throw contactError;
+    userHandle = textValue(contact?.username) || event.senderId;
+  }
+
+  const { data: lead, error } = await supabase
+    .from('captured_leads')
+    .upsert(
+      {
+        workspace_id: account.workspace_id,
+        instagram_account_id: account.id,
+        user_handle: userHandle,
+        email,
+        phone,
+        source_event_id: event.eventId,
+      },
+      { onConflict: 'instagram_account_id,source_event_id' },
+    )
+    .select('id, workspace_id, instagram_account_id, user_handle, email, phone, created_at')
+    .single();
+  if (error) throw new Error(`Failed to save captured Instagram lead: ${error.message}`);
+  return lead;
+}
+
+async function exportCapturedLead(
+  supabase: ReturnType<typeof createAdminClient>,
+  workspaceId: string,
+  lead: {
+    id: string;
+    workspace_id: string;
+    instagram_account_id: string;
+    user_handle: string;
+    email: string | null;
+    phone: string | null;
+    created_at: string;
+  },
+  eventId: string,
+) {
+  const { data: integration, error } = await supabase
+    .from('workspace_integrations')
+    .select('webhook_url, google_apps_script_url, google_sheets_spreadsheet_id, shared_secret_token')
+    .eq('workspace_id', workspaceId)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load workspace lead integrations: ${error.message}`);
+
+  if (!integration?.webhook_url && !integration?.google_apps_script_url) return;
+
+  const payload = {
+    event: 'lead.captured',
+    event_id: eventId,
+    lead: {
+      id: lead.id,
+      workspace_id: lead.workspace_id,
+      instagram_account_id: lead.instagram_account_id,
+      user_handle: lead.user_handle,
+      email: lead.email,
+      phone: lead.phone,
+      created_at: lead.created_at,
+    },
+  };
+  const destinations: Array<Promise<void>> = [];
+
+  if (integration.webhook_url) {
+    const url = validateExternalHttpsUrl(integration.webhook_url, 'Configured webhook URL');
+    destinations.push(
+      postLead(url, payload, integration.shared_secret_token, 'Webhook'),
+    );
+  }
+
+  if (integration.google_apps_script_url) {
+    const url = validateExternalHttpsUrl(
+      integration.google_apps_script_url,
+      'Configured Google Apps Script URL',
+    );
+    destinations.push(
+      postLead(
+        url,
+        {
+          ...payload,
+          token: integration.shared_secret_token,
+          spreadsheet_id: integration.google_sheets_spreadsheet_id,
+        },
+        null,
+        'Google Apps Script',
+        true,
+      ),
+    );
+  }
+
+  const results = await Promise.allSettled(destinations);
+  const failures = results
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+  if (failures.length > 0) {
+    throw new Error(`Lead export failed: ${failures.join('; ')}`);
+  }
+}
+
+async function postLead(
+  url: string,
+  payload: Record<string, unknown>,
+  sharedSecret: string | null,
+  destination: string,
+  followAppsScriptRedirects = false,
+) {
+  const body = JSON.stringify(payload);
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(sharedSecret ? { Authorization: `Bearer ${sharedSecret}` } : {}),
+  };
+  let target = url;
+  let response: Response;
+
+  for (let redirects = 0; ; redirects += 1) {
+    try {
+      response = await fetch(target, {
+        method: 'POST',
+        headers,
+        body,
+        cache: 'no-store',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${destination} request failed: ${message}`);
+    }
+
+    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+    const location = response.headers.get('location');
+    if (!followAppsScriptRedirects || !location || redirects >= 2) {
+      throw new Error(`${destination} returned an unsupported redirect.`);
+    }
+
+    const redirectedUrl = new URL(location, target);
+    if (
+      redirectedUrl.protocol !== 'https:' ||
+      !(
+        redirectedUrl.hostname === 'script.googleusercontent.com' ||
+        redirectedUrl.hostname.endsWith('.script.googleusercontent.com')
+      )
+    ) {
+      throw new Error(`${destination} redirected to an untrusted host.`);
+    }
+    target = redirectedUrl.toString();
+  }
+
+  if (!response.ok) {
+    throw new Error(`${destination} responded with HTTP ${response.status}.`);
+  }
+}
+
 async function executeWorkflow(
   supabase: ReturnType<typeof createAdminClient>,
   account: { id: string; instagram_page_id: string; access_token_encrypted: string; workspace_id: string },
@@ -277,7 +460,9 @@ async function executeWorkflow(
     throw new Error(errorMessage);
   }
 
-  const actions = matchingTriggers.flatMap((trigger) => reachableActions(flow, trigger.id ?? '', event));
+  const actions = matchingTriggers
+    .flatMap((trigger) => reachableActions(flow, trigger.id ?? '', event))
+    .sort((left, right) => Number(right.type === 'lead_capture') - Number(left.type === 'lead_capture'));
   if (actions.length === 0) return;
 
   const eventIdentity = event.eventType === 'comment' && event.postId
@@ -303,25 +488,37 @@ async function executeWorkflow(
     }
     duplicateClaimed = true;
 
-    const accessToken = decryptPageAccessToken(account.access_token_encrypted);
-    const graphOptions = {
-      accessToken,
-      refreshAccessToken: async (currentToken: string) => {
-        const refreshedToken = await refreshLongLivedAccessToken(currentToken);
-        const { error } = await supabase
-          .from('ig_accounts')
-          .update({ access_token_encrypted: encryptPageAccessToken(refreshedToken) })
-          .eq('id', account.id);
-        if (error) throw new Error(`Refreshed Meta token could not be saved: ${error.message}`);
-        return refreshedToken;
-      },
-    };
+    let graphOptions: GraphApiOptions | null = null;
     const responses: unknown[] = [];
     for (const action of actions) {
       const data = action.data ?? {};
+      if (action.type === 'lead_capture') {
+        if (event.eventType !== 'message') continue;
+        const { email, phone } = extractLeadContact(event.textContent);
+        if (!email && !phone) continue;
+        const lead = await saveCapturedLead(supabase, account, event, email, phone);
+        await exportCapturedLead(supabase, workflow.workspace_id, lead, event.eventId);
+        successfulActions += 1;
+        continue;
+      }
+
       const message = textValue(data.message).trim();
       if (!message) throw new Error(`Message action "${textValue(data.label) || action.id}" has no message text.`);
 
+      if (!graphOptions) {
+        graphOptions = {
+          accessToken: decryptPageAccessToken(account.access_token_encrypted),
+          refreshAccessToken: async (currentToken: string) => {
+            const refreshedToken = await refreshLongLivedAccessToken(currentToken);
+            const { error } = await supabase
+              .from('ig_accounts')
+              .update({ access_token_encrypted: encryptPageAccessToken(refreshedToken) })
+              .eq('id', account.id);
+            if (error) throw new Error(`Refreshed Meta token could not be saved: ${error.message}`);
+            return refreshedToken;
+          },
+        };
+      }
       const label = textValue(data.actionType ?? data.label).toLowerCase();
       if ((label.includes('public comment') || label.includes('reply to comment')) && event.commentId) {
         responses.push(await replyToInstagramComment(event.commentId, message, graphOptions));
@@ -335,10 +532,16 @@ async function executeWorkflow(
       }
       successfulActions = responses.length;
     }
-    if (responses.length === 0) {
-      throw new Error('No executable message action was found for the matched workflow.');
-    }
-    await recordExecution(supabase, workflow.id, userId, event, 'EXECUTED', responses, null, executionLog.id);
+    await recordExecution(
+      supabase,
+      workflow.id,
+      userId,
+      event,
+      'EXECUTED',
+      responses,
+      null,
+      executionLog.id,
+    );
   } catch (error) {
     if (successfulActions === 0 && redis) {
       if (duplicateClaimed) await redis.del(duplicateKey);
