@@ -226,6 +226,9 @@ export async function GET(request: NextRequest) {
     }
 
     const workspaceId = await ensureUserWorkspace(user.id, supabase);
+    if (!workspaceId) {
+      return redirectToDashboard(request, "error", "workspace_unavailable");
+    }
 
     const accounts = instagramPages.map((page) => ({
       workspace_id: workspaceId,

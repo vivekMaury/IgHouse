@@ -26,6 +26,8 @@ const connectionMessages: Record<string, string> = {
   access_denied: "Instagram access was not granted. You can try connecting again.",
   invalid_state: "The connection expired or could not be verified. Please try again.",
   no_workspace: "Your account does not have a workspace to connect to.",
+  workspace_unavailable:
+    "A workspace could not be loaded or created. Please try again or contact support.",
   no_instagram_account:
     "No Instagram professional account linked to a Facebook Page was found. Link one in Meta and try again.",
   not_configured: "Instagram connection is not configured yet. Please contact support.",
@@ -143,6 +145,8 @@ export default async function DashboardOverview({
   const reason = searchParams?.reason;
   const connectionError = searchParams?.error
     ? searchParams.error
+    : !workspaceId
+      ? "A workspace could not be loaded or created. Please try again or contact support."
     : reason
       ? connectionMessages[reason] ?? connectionMessages.connection_failed
       : null;
