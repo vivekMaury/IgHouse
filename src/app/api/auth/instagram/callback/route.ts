@@ -15,6 +15,7 @@ type OAuthTokenResponse = {
 
 type PageAccount = {
   id?: unknown;
+  name?: unknown;
   access_token?: unknown;
   instagram_business_account?: {
     id?: unknown;
@@ -24,6 +25,11 @@ type PageAccount = {
 
 type PageListResponse = {
   data?: unknown;
+  error?: { message?: string };
+};
+
+type PageInstagramResponse = {
+  instagram_business_account?: PageAccount["instagram_business_account"];
   error?: { message?: string };
 };
 
@@ -118,25 +124,100 @@ export async function GET(request: NextRequest) {
     const pagesUrl = new URL(
       `https://graph.facebook.com/${graphApiVersion}/me/accounts`,
     );
-    pagesUrl.searchParams.set(
-      "fields",
-      "id,access_token,instagram_business_account{id,username}",
-    );
+    pagesUrl.searchParams.set("fields", "id,name");
     const pagesResponse = await fetch(pagesUrl, {
       headers: { Authorization: `Bearer ${tokenBody.access_token}` },
       cache: "no-store",
     });
     const pagesBody = (await pagesResponse.json()) as PageListResponse;
+    console.log(
+      "Instagram OAuth /me/accounts raw response:",
+      JSON.stringify(pagesBody),
+    );
     if (!pagesResponse.ok || !Array.isArray(pagesBody.data)) {
       throw new Error(pagesBody.error?.message ?? "Meta could not return your Pages.");
     }
 
-    const instagramPages = (pagesBody.data as PageAccount[]).filter(
-      (page) =>
-        typeof page.id === "string" &&
-        typeof page.access_token === "string" &&
-        typeof page.instagram_business_account?.id === "string",
+    const tokenUrl = new URL(
+      `https://graph.facebook.com/${graphApiVersion}/me/accounts`,
     );
+    tokenUrl.searchParams.set("fields", "id,access_token");
+    const pageTokensResponse = await fetch(tokenUrl, {
+      headers: { Authorization: `Bearer ${tokenBody.access_token}` },
+      cache: "no-store",
+    });
+    const pageTokensBody = (await pageTokensResponse.json()) as PageListResponse;
+    if (!pageTokensResponse.ok || !Array.isArray(pageTokensBody.data)) {
+      throw new Error(pageTokensBody.error?.message ?? "Meta could not return Page access tokens.");
+    }
+
+    const pageTokens = new Map(
+      (pageTokensBody.data as PageAccount[])
+        .filter(
+          (page): page is PageAccount & { id: string; access_token: string } =>
+            typeof page.id === "string" && typeof page.access_token === "string",
+        )
+        .map((page) => [page.id, page.access_token]),
+    );
+    const instagramPages: Array<PageAccount & {
+      id: string;
+      access_token: string;
+      instagram_business_account: NonNullable<PageAccount["instagram_business_account"]>;
+    }> = [];
+
+    for (const page of pagesBody.data as PageAccount[]) {
+      if (typeof page.id !== "string") continue;
+      const pageAccessToken = pageTokens.get(page.id);
+      if (!pageAccessToken) {
+        console.warn(
+          "Instagram OAuth did not receive an access token for the returned Page.",
+          { pageId: page.id, pageName: page.name ?? null },
+        );
+        continue;
+      }
+
+      const instagramUrl = new URL(
+        `https://graph.facebook.com/${graphApiVersion}/${encodeURIComponent(page.id)}`,
+      );
+      instagramUrl.searchParams.set("fields", "instagram_business_account");
+      const instagramResponse = await fetch(instagramUrl, {
+        headers: { Authorization: `Bearer ${pageAccessToken}` },
+        cache: "no-store",
+      });
+      const instagramBody =
+        (await instagramResponse.json()) as PageInstagramResponse;
+      console.log(
+        `Instagram OAuth Page ${page.id} instagram_business_account raw response:`,
+        JSON.stringify(instagramBody),
+      );
+      if (!instagramResponse.ok) {
+        throw new Error(
+          instagramBody.error?.message ??
+            `Meta could not read Instagram account data for Page ${page.id}.`,
+        );
+      }
+
+      const instagramAccount = instagramBody.instagram_business_account;
+      if (!instagramAccount || typeof instagramAccount.id !== "string") {
+        console.warn(
+          "Instagram OAuth Page has no linked instagram_business_account.",
+          {
+            pageId: page.id,
+            pageName: page.name ?? null,
+            instagramBusinessAccount: instagramAccount ?? null,
+          },
+        );
+        continue;
+      }
+
+      instagramPages.push({
+        ...page,
+        id: page.id,
+        access_token: pageAccessToken,
+        instagram_business_account: instagramAccount,
+      });
+    }
+
     if (instagramPages.length === 0) {
       return redirectToDashboard(request, "error", "no_instagram_account");
     }

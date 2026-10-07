@@ -12,6 +12,7 @@ const permissions = [
   "instagram_basic",
   "instagram_manage_comments",
   "instagram_manage_messages",
+  "business_management",
 ];
 
 function buildAuthorizationUrl(request: NextRequest, appId: string, state: string) {
