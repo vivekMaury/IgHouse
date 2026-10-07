@@ -5,6 +5,7 @@ import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
 import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const stateCookieName = "ighouse_instagram_oauth_state";
 const graphApiVersion = process.env.META_GRAPH_API_VERSION ?? "v20.0";
@@ -65,39 +66,40 @@ function isMatchingState(expected: string | undefined, received: string | null) 
 }
 
 export async function GET(request: NextRequest) {
-  const url = request.nextUrl;
-  if (url.searchParams.has("error")) {
-    return redirectToDashboard(request, "error", "access_denied");
-  }
-
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  if (!code || !isMatchingState(request.cookies.get(stateCookieName)?.value, state)) {
-    return redirectToDashboard(request, "error", "invalid_state");
-  }
-
-  const supabase = createClient();
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-  if (userError || !user) {
-    return redirectToDashboard(request, "error", "not_signed_in");
-  }
-
-  const appId = process.env.NEXT_PUBLIC_META_APP_ID ?? process.env.META_APP_ID;
-  const appSecret = process.env.META_APP_SECRET;
-  const encryptionKey = process.env.META_TOKEN_ENCRYPTION_KEY;
-  if (
-    !appId ||
-    !appSecret ||
-    !encryptionKey ||
-    !/^v\d+\.\d+$/.test(graphApiVersion)
-  ) {
-    return redirectToDashboard(request, "error", "not_configured");
-  }
-
   try {
+    const url = request.nextUrl;
+    if (url.searchParams.has("error")) {
+      return redirectToDashboard(request, "error", "access_denied");
+    }
+
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (!code || !isMatchingState(request.cookies.get(stateCookieName)?.value, state)) {
+      return redirectToDashboard(request, "error", "invalid_state");
+    }
+
+    const supabase = createClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError) throw userError;
+    if (!user) {
+      return redirectToDashboard(request, "error", "not_signed_in");
+    }
+
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID ?? process.env.META_APP_ID;
+    const appSecret = process.env.META_APP_SECRET;
+    const encryptionKey = process.env.META_TOKEN_ENCRYPTION_KEY;
+    if (
+      !appId ||
+      !appSecret ||
+      !encryptionKey ||
+      !/^v\d+\.\d+$/.test(graphApiVersion)
+    ) {
+      return redirectToDashboard(request, "error", "not_configured");
+    }
+
     const callbackUrl = new URL("/api/auth/instagram/callback", request.url);
     const tokenResponse = await fetch(
       `https://graph.facebook.com/${graphApiVersion}/oauth/access_token`,
@@ -243,9 +245,18 @@ export async function GET(request: NextRequest) {
 
     return redirectToDashboard(request, "connected");
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown Instagram connection error.";
-    console.error("Instagram OAuth callback failed:", message);
-    return redirectToDashboard(request, "error", "connection_failed");
+    console.error("[IG_AUTH_ERROR]:", error);
+    const message = error instanceof Error ? error.message : "Unknown Instagram connection error.";
+    const response = NextResponse.redirect(
+      new URL(`/dashboard?error=${encodeURIComponent(message)}`, request.url),
+    );
+    response.cookies.set(stateCookieName, "", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/api/auth/instagram",
+      maxAge: 0,
+    });
+    return response;
   }
 }

@@ -18,6 +18,7 @@ type DashboardPageProps = {
   searchParams?: {
     instagram?: string;
     reason?: string;
+    error?: string;
   };
 };
 
@@ -140,9 +141,11 @@ export default async function DashboardOverview({
   const displayMetric = (value: number) =>
     isConnected ? value.toLocaleString("en") : "—";
   const reason = searchParams?.reason;
-  const connectionError = reason
-    ? connectionMessages[reason] ?? connectionMessages.connection_failed
-    : null;
+  const connectionError = searchParams?.error
+    ? searchParams.error
+    : reason
+      ? connectionMessages[reason] ?? connectionMessages.connection_failed
+      : null;
   const stats = [
     {
       label: "Messages Processed",

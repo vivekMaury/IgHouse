@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const stateCookieName = "ighouse_instagram_oauth_state";
 const graphApiVersion = process.env.META_GRAPH_API_VERSION ?? "v20.0";
@@ -32,9 +33,8 @@ function buildAuthorizationUrl(request: NextRequest, appId: string, state: strin
 }
 
 export async function GET(request: NextRequest) {
-  const wantsJson = request.nextUrl.searchParams.get("format") === "json";
-
   try {
+    const wantsJson = request.nextUrl.searchParams.get("format") === "json";
     const appId = process.env.NEXT_PUBLIC_META_APP_ID ?? process.env.META_APP_ID;
     const appSecret = process.env.META_APP_SECRET;
     const encryptionKey = process.env.META_TOKEN_ENCRYPTION_KEY;
@@ -56,7 +56,8 @@ export async function GET(request: NextRequest) {
       error: userError,
     } = await supabase.auth.getUser();
 
-    if (userError || !user) {
+    if (userError) throw userError;
+    if (!user) {
       if (wantsJson) {
         return NextResponse.json({ error: "Authentication required" }, { status: 401 });
       }
@@ -78,10 +79,10 @@ export async function GET(request: NextRequest) {
     });
     return response;
   } catch (error) {
-    console.error("Instagram OAuth initialization failed:", error);
-    return NextResponse.json(
-      { error: "Instagram OAuth could not be initialized." },
-      { status: 500 },
+    console.error("[IG_AUTH_ERROR]:", error);
+    const message = error instanceof Error ? error.message : "Instagram OAuth could not be initialized.";
+    return NextResponse.redirect(
+      new URL(`/dashboard?error=${encodeURIComponent(message)}`, request.url),
     );
   }
 }
