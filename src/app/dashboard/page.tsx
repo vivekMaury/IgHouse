@@ -96,7 +96,7 @@ export default async function DashboardOverview({
           .maybeSingle(),
         supabase
           .from("ig_accounts")
-          .select("id, username")
+          .select("id, username, name, instagram_account_id")
           .eq("workspace_id", membership.workspace_id)
           .eq("is_active", true),
         supabase

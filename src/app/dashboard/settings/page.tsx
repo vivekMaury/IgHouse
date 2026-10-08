@@ -128,7 +128,9 @@ export default async function DashboardSettingsPage({
         appIdConfigured={Boolean(
           process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID,
         )}
-        webhookConfigured={Boolean(process.env.META_VERIFY_TOKEN)}
+        webhookConfigured={Boolean(
+          process.env.META_WEBHOOK_VERIFY_TOKEN || process.env.META_VERIFY_TOKEN,
+        )}
         email={user.email ?? "No email address"}
         workspaceName={workspace?.name ?? "Workspace"}
         canManageIntegrations={canManageIntegrations}

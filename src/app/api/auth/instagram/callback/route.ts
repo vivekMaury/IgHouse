@@ -24,6 +24,7 @@ type PageAccount = {
     username?: unknown;
     name?: unknown;
     profile_picture_url?: unknown;
+    access_token?: unknown;
   } | null;
 };
 
@@ -36,6 +37,12 @@ type PageInstagramResponse = {
   instagram_business_account?: PageAccount["instagram_business_account"];
   error?: { message?: string };
 };
+
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized || null;
+}
 
 function redirectToDashboard(
   request: NextRequest,
@@ -126,12 +133,13 @@ export async function GET(request: NextRequest) {
       throw new Error(tokenBody.error?.message ?? "Meta did not return an access token.");
     }
 
+    const userAccessToken = tokenBody.access_token;
     const pagesUrl = new URL("https://graph.facebook.com/v19.0/me/accounts");
     pagesUrl.searchParams.set(
       "fields",
       "id,name,access_token,instagram_business_account{id,username,name,profile_picture_url}",
     );
-    pagesUrl.searchParams.set("access_token", tokenBody.access_token);
+    pagesUrl.searchParams.set("access_token", userAccessToken);
     const pagesResponse = await fetch(pagesUrl, {
       headers: { Authorization: `Bearer ${tokenBody.access_token}` },
       cache: "no-store",
@@ -242,28 +250,38 @@ export async function GET(request: NextRequest) {
       throw new Error("Could not resolve or create a workspace for this account.");
     }
 
-    const accounts = instagramPages.map((page) => ({
-      workspace_id: workspaceId,
-      instagram_page_id: page.id as string,
-      username:
-        typeof page.instagram_business_account?.username === "string"
-          ? page.instagram_business_account.username
-          : typeof page.instagram_business_account?.name === "string"
-            ? page.instagram_business_account.name
-            : typeof page.name === "string"
-              ? page.name
-              : page.id,
-      profile_picture_url:
-        typeof page.instagram_business_account?.profile_picture_url === "string"
-          ? page.instagram_business_account.profile_picture_url
-          : null,
-      access_token_encrypted: encryptPageAccessToken(page.access_token as string),
-      is_active: true,
-    }));
+    const accounts = instagramPages.map((page) => {
+      const instagramAccount = page.instagram_business_account;
+      const accountName =
+        nonEmptyString(instagramAccount.name) ??
+        nonEmptyString(page.name) ??
+        page.id;
+      const username =
+        nonEmptyString(instagramAccount.username) ??
+        nonEmptyString(page.name) ??
+        accountName;
+      const accessToken =
+        nonEmptyString(instagramAccount.access_token) ?? page.access_token;
+
+      return {
+        workspace_id: workspaceId,
+        instagram_page_id: page.id,
+        instagram_account_id: instagramAccount.id,
+        name: accountName,
+        username,
+        profile_picture_url:
+          nonEmptyString(instagramAccount.profile_picture_url) ?? null,
+        access_token_encrypted: encryptPageAccessToken(accessToken),
+        is_active: true,
+      };
+    });
 
     const { error: saveError } = await supabase
       .from("ig_accounts")
-      .upsert(accounts, { onConflict: "instagram_page_id" });
+      .upsert(accounts, {
+        onConflict: "instagram_page_id",
+        ignoreDuplicates: false,
+      });
     if (saveError) throw saveError;
 
     return redirectToDashboard(request, "success");

@@ -16,6 +16,7 @@ export type InstagramEventType = 'comment' | 'message' | 'story_mention';
 export type InstagramEvent = {
   instagramAccountId: string;
   senderId: string;
+  recipientId: string | null;
   eventType: InstagramEventType;
   textContent: string;
   userHandle: string | null;
@@ -55,8 +56,7 @@ export function extractInstagramEvents(payload: Record<string, unknown>): Instag
   const events: InstagramEvent[] = [];
   for (const rawEntry of payload.entry) {
     const entry = asRecord(rawEntry);
-    const instagramAccountId = textValue(entry.id);
-    if (!instagramAccountId) continue;
+    const entryAccountId = textValue(entry.id);
 
     if (Array.isArray(entry.changes)) {
       for (const rawChange of entry.changes) {
@@ -65,11 +65,15 @@ export function extractInstagramEvents(payload: Record<string, unknown>): Instag
         const value = asRecord(change.value);
         const senderId = textValue(asRecord(value.from).id);
         const commentId = textValue(value.id);
+        const recipientId = textValue(asRecord(value.to).id) || entryAccountId;
+        const instagramAccountId = entryAccountId || recipientId;
         if (!senderId || !commentId) continue;
+        if (!instagramAccountId) continue;
         const mediaId = textValue(asRecord(value.media).id) || null;
         events.push({
           instagramAccountId,
           senderId,
+          recipientId: recipientId || null,
           eventType: 'comment',
           textContent: textValue(value.text),
           userHandle: textValue(asRecord(value.from).username) || null,
@@ -85,9 +89,17 @@ export function extractInstagramEvents(payload: Record<string, unknown>): Instag
       for (const rawMessagingEvent of entry.messaging) {
         const messagingEvent = asRecord(rawMessagingEvent);
         const sender = asRecord(messagingEvent.sender);
+        const recipient = asRecord(messagingEvent.recipient);
         const senderId = textValue(sender.id);
+        const recipientId = textValue(recipient.id) || entryAccountId;
+        const instagramAccountId = entryAccountId || recipientId;
         const message = asRecord(messagingEvent.message);
-        if (!senderId || senderId === instagramAccountId || !Object.keys(message).length) continue;
+        if (
+          !senderId ||
+          !instagramAccountId ||
+          senderId === instagramAccountId ||
+          !Object.keys(message).length
+        ) continue;
 
         const attachments = Array.isArray(message.attachments) ? message.attachments.map(asRecord) : [];
         const isStoryMention = attachments.some((attachment) => attachment.type === 'story_mention');
@@ -96,6 +108,7 @@ export function extractInstagramEvents(payload: Record<string, unknown>): Instag
         events.push({
           instagramAccountId,
           senderId,
+          recipientId: recipientId || null,
           eventType,
           textContent: textValue(message.text),
           userHandle: textValue(sender.username) || textValue(sender.name) || null,
@@ -429,7 +442,13 @@ async function postLead(
 
 async function executeWorkflow(
   supabase: ReturnType<typeof createAdminClient>,
-  account: { id: string; instagram_page_id: string; access_token_encrypted: string; workspace_id: string },
+  account: {
+    id: string;
+    instagram_page_id: string;
+    instagram_account_id: string | null;
+    access_token_encrypted: string;
+    workspace_id: string;
+  },
   workflow: { id: string; workspace_id: string; flow_data: unknown },
   event: InstagramEvent,
   userId: string,
@@ -528,7 +547,13 @@ async function executeWorkflow(
         const quickReplies = Array.isArray(data.quickReplies)
           ? data.quickReplies.filter((reply): reply is string => typeof reply === 'string')
           : undefined;
-        responses.push(await sendInstagramDM(account.instagram_page_id, event.senderId, message, graphOptions, quickReplies));
+        responses.push(await sendInstagramDM(
+          account.instagram_account_id ?? account.instagram_page_id,
+          event.senderId,
+          message,
+          graphOptions,
+          quickReplies,
+        ));
       }
       successfulActions = responses.length;
     }
@@ -558,14 +583,25 @@ export async function evaluateWorkflow(eventPayload: Record<string, unknown>) {
   if (events.length === 0) return { events: 0, workflows: 0 };
 
   const supabase = createAdminClient();
+  await persistIncomingInstagramEvents(supabase, events);
   let workflowsExecuted = 0;
   for (const event of events) {
-    const { data: account, error: accountError } = await supabase
+    let { data: account, error: accountError } = await supabase
       .from('ig_accounts')
-      .select('id, instagram_page_id, access_token_encrypted, workspace_id')
-      .eq('instagram_page_id', event.instagramAccountId)
+      .select('id, instagram_page_id, instagram_account_id, access_token_encrypted, workspace_id')
+      .eq('instagram_account_id', event.instagramAccountId)
       .eq('is_active', true)
       .maybeSingle();
+    if (!account && !accountError) {
+      const pageAccount = await supabase
+        .from('ig_accounts')
+        .select('id, instagram_page_id, instagram_account_id, access_token_encrypted, workspace_id')
+        .eq('instagram_page_id', event.instagramAccountId)
+        .eq('is_active', true)
+        .maybeSingle();
+      account = pageAccount.data;
+      accountError = pageAccount.error;
+    }
     if (accountError) throw accountError;
     if (!account?.workspace_id || !account.access_token_encrypted) {
       console.warn('Ignoring Instagram event for an unlinked or inactive account.', { accountId: event.instagramAccountId });
@@ -576,6 +612,7 @@ export async function evaluateWorkflow(eventPayload: Record<string, unknown>) {
       .from('workflows')
       .select('id, workspace_id, flow_data')
       .eq('workspace_id', account.workspace_id)
+      .in('status', ['published', 'active'])
       .eq('is_active', true);
     if (workflowError) throw workflowError;
 
@@ -601,4 +638,75 @@ export async function processInstagramWebhook(
   payload: Record<string, unknown>,
 ) {
   return evaluateWorkflow(payload);
+}
+
+async function persistIncomingInstagramEvents(
+  supabase: ReturnType<typeof createAdminClient>,
+  events: InstagramEvent[],
+) {
+  for (const event of events) {
+    let { data: account, error: accountError } = await supabase
+      .from('ig_accounts')
+      .select('id')
+      .eq('instagram_account_id', event.instagramAccountId)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (!account && !accountError) {
+      const pageAccount = await supabase
+        .from('ig_accounts')
+        .select('id')
+        .eq('instagram_page_id', event.instagramAccountId)
+        .eq('is_active', true)
+        .maybeSingle();
+      account = pageAccount.data;
+      accountError = pageAccount.error;
+    }
+    if (accountError) throw accountError;
+    if (!account) {
+      console.warn('Skipping inbox persistence for an unlinked Instagram account.', {
+        instagramAccountId: event.instagramAccountId,
+      });
+      continue;
+    }
+
+    const { data: contact, error: contactError } = await supabase
+      .from('contacts')
+      .upsert(
+        {
+          ig_account_id: account.id,
+          ig_scoped_user_id: event.senderId,
+          username: event.userHandle ?? event.senderId,
+          last_interaction_at: new Date().toISOString(),
+        },
+        { onConflict: 'ig_account_id,ig_scoped_user_id' },
+      )
+      .select('id')
+      .single();
+    if (contactError) throw contactError;
+
+    const { error: conversationError } = await supabase
+      .from('conversations')
+      .upsert(
+        {
+          contact_id: contact.id,
+          direction: 'inbound',
+          message_body: event.textContent,
+          external_event_id: event.eventId,
+          metadata: {
+            event_type: event.eventType,
+            instagram_account_id: event.instagramAccountId,
+            sender_id: event.senderId,
+            recipient_id: event.recipientId,
+            media_id: event.mediaId,
+            post_id: event.postId,
+            comment_id: event.commentId,
+          },
+        },
+        {
+          onConflict: 'contact_id,external_event_id',
+          ignoreDuplicates: true,
+        },
+      );
+    if (conversationError) throw conversationError;
+  }
 }

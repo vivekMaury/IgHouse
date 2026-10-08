@@ -15,6 +15,8 @@ export type DashboardViewProps = {
   accounts?: Array<{
     id: string;
     username: string | null;
+    name?: string | null;
+    instagram_account_id?: string | null;
   }> | null;
   stats?: {
     totalDms?: number | null;

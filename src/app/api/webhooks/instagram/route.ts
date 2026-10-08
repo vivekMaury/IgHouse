@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { evaluateWorkflow } from '@/lib/workflow-engine';
 import { enqueueWebhook } from '@/lib/queue/upstash';
@@ -48,10 +49,14 @@ export async function GET(request: Request) {
   const mode = url.searchParams.get('hub.mode');
   const verifyToken = url.searchParams.get('hub.verify_token');
   const challenge = url.searchParams.get('hub.challenge');
-  const expectedToken = process.env.META_VERIFY_TOKEN?.trim();
+  const expectedToken = (
+    process.env.META_WEBHOOK_VERIFY_TOKEN ?? process.env.META_VERIFY_TOKEN
+  )?.trim();
 
   if (!expectedToken) {
-    console.error('Instagram webhook verification failed: META_VERIFY_TOKEN is not configured.');
+    console.error(
+      'Instagram webhook verification failed: META_WEBHOOK_VERIFY_TOKEN is not configured.',
+    );
     return NextResponse.json(
       { error: 'Webhook verification is not configured.' },
       { status: 500 },
@@ -71,14 +76,30 @@ export async function GET(request: Request) {
   });
 }
 
+function hasValidSignature(rawBody: string, signature: string | null) {
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appSecret || !signature) return false;
+
+  const match = /^sha256=([a-f\d]{64})$/i.exec(signature);
+  if (!match) return false;
+
+  const expected = createHmac('sha256', appSecret).update(rawBody).digest();
+  const received = Buffer.from(match[1], 'hex');
+  return received.length === expected.length && timingSafeEqual(received, expected);
+}
+
 export async function POST(request: Request) {
-  // Signature verification is temporarily bypassed for end-to-end testing.
   let rawBody: string;
   try {
     rawBody = await request.text();
   } catch (error) {
     console.error('Failed to read Instagram webhook request body.', error);
-    return NextResponse.json({ success: true, queued: false }, { status: 200 });
+    return NextResponse.json({ error: 'Unable to read webhook body.' }, { status: 400 });
+  }
+
+  if (!hasValidSignature(rawBody, request.headers.get('x-hub-signature-256'))) {
+    console.error('Rejected Instagram webhook with an invalid or missing signature.');
+    return NextResponse.json({ error: 'Invalid webhook signature.' }, { status: 401 });
   }
 
   let payload: unknown;
@@ -86,14 +107,12 @@ export async function POST(request: Request) {
     payload = JSON.parse(rawBody);
   } catch (error) {
     console.error('Failed to parse Instagram webhook JSON payload.', error);
-    return NextResponse.json({ success: true, queued: false }, { status: 200 });
+    return NextResponse.json({ error: 'Invalid JSON webhook payload.' }, { status: 400 });
   }
-
-  console.log('✅ WEBHOOK RECEIVED:', JSON.stringify(payload, null, 2));
 
   if (!isRecord(payload)) {
     console.error('Instagram webhook payload must be a JSON object.');
-    return NextResponse.json({ success: true, queued: false }, { status: 200 });
+    return NextResponse.json({ error: 'Invalid webhook payload.' }, { status: 400 });
   }
 
   const eventTypes = getEventTypes(payload);
@@ -106,7 +125,10 @@ export async function POST(request: Request) {
   const downstreamErrors: string[] = [];
   try {
     const result = await evaluateWorkflow(payload);
-    console.log('Instagram workflow evaluation completed.', result);
+    console.log('Instagram workflow evaluation completed.', {
+      events: result.events,
+      workflows: result.workflows,
+    });
   } catch (error) {
     const message = getErrorMessage(error);
     downstreamErrors.push(`Direct workflow evaluation failed: ${message}`);
@@ -142,10 +164,18 @@ export async function POST(request: Request) {
     console.error('Instagram webhook Supabase logging failed.', error);
   }
 
-  return NextResponse.json(
-    { success: true, processed: queueStatus === 'processed', queued: queueStatus === 'queued' },
-    { status: 200 },
-  );
+  if (queueStatus === 'failed') {
+    return NextResponse.json(
+      { success: false, processed: false, queued: false },
+      { status: 503 },
+    );
+  }
+
+  return NextResponse.json({
+    success: true,
+    processed: queueStatus === 'processed',
+    queued: queueStatus === 'queued',
+  });
 }
 
 function getErrorMessage(error: unknown): string {

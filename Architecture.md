@@ -42,6 +42,6 @@ Please generate the complete project initialization structure, Supabase database
    - Parse Instagram comment/message payloads and update `contacts` & `conversations` using `@supabase/supabase-js` with Service Role Key.
 
 5. Supabase Environment Setup (`.env.local` & `supabase/functions/.env`):
-   - Define variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`.
+   - Define variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN` (legacy: `META_VERIFY_TOKEN`), `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`.
 
 Provide production-grade, clean TypeScript code with detailed comments and step-by-step CLI execution commands (e.g., `supabase start`, `supabase db push`, `supabase functions deploy`).
