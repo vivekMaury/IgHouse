@@ -8,7 +8,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const stateCookieName = "ighouse_instagram_oauth_state";
-const graphApiVersion = process.env.META_GRAPH_API_VERSION ?? "v20.0";
+const graphApiVersion =
+  process.env.META_GRAPH_API_VERSION ??
+  process.env.NEXT_PUBLIC_META_GRAPH_API_VERSION ??
+  "v23.0";
 
 type OAuthTokenResponse = {
   access_token?: unknown;
@@ -134,12 +137,13 @@ export async function GET(request: NextRequest) {
     }
 
     const userAccessToken = tokenBody.access_token;
-    const pagesUrl = new URL("https://graph.facebook.com/v19.0/me/accounts");
+    const pagesUrl = new URL(
+      `https://graph.facebook.com/${graphApiVersion}/me/accounts`,
+    );
     pagesUrl.searchParams.set(
       "fields",
       "id,name,access_token,instagram_business_account{id,username,name,profile_picture_url}",
     );
-    pagesUrl.searchParams.set("access_token", userAccessToken);
     const pagesResponse = await fetch(pagesUrl, {
       headers: { Authorization: `Bearer ${tokenBody.access_token}` },
       cache: "no-store",
@@ -245,10 +249,7 @@ export async function GET(request: NextRequest) {
       return redirectToDashboard(request, "error", "no_instagram_account");
     }
 
-    const workspaceId = await ensureUserWorkspace(user.id);
-    if (!workspaceId) {
-      throw new Error("Could not resolve or create a workspace for this account.");
-    }
+    const workspaceId = await ensureUserWorkspace(supabase, user.id);
 
     const accounts = instagramPages.map((page) => {
       const instagramAccount = page.instagram_business_account;
@@ -287,17 +288,6 @@ export async function GET(request: NextRequest) {
     return redirectToDashboard(request, "success");
   } catch (error) {
     console.error("[IG_AUTH_ERROR]:", error);
-    const message = error instanceof Error ? error.message : "Unknown Instagram connection error.";
-    const response = NextResponse.redirect(
-      new URL(`/dashboard?error=${encodeURIComponent(message)}`, request.url),
-    );
-    response.cookies.set(stateCookieName, "", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/api/auth/instagram",
-      maxAge: 0,
-    });
-    return response;
+    return redirectToDashboard(request, "error", "connection_failed");
   }
 }

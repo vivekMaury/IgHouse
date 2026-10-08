@@ -6,7 +6,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const stateCookieName = "ighouse_instagram_oauth_state";
-const graphApiVersion = process.env.META_GRAPH_API_VERSION ?? "v20.0";
+const graphApiVersion =
+  process.env.META_GRAPH_API_VERSION ??
+  process.env.NEXT_PUBLIC_META_GRAPH_API_VERSION ??
+  "v23.0";
 const permissions = [
   "pages_show_list",
   "pages_read_engagement",

@@ -1,24 +1,4 @@
-ALTER TABLE workspaces
-    ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
-
-UPDATE workspaces AS workspace
-SET owner_id = membership.user_id
-FROM workspace_members AS membership
-WHERE membership.workspace_id = workspace.id
-  AND membership.role IN ('owner', 'admin')
-  AND workspace.owner_id IS NULL
-  AND membership.user_id = (
-      SELECT candidate.user_id
-      FROM workspace_members AS candidate
-      WHERE candidate.workspace_id = workspace.id
-        AND candidate.role IN ('owner', 'admin')
-      ORDER BY CASE candidate.role WHEN 'owner' THEN 0 ELSE 1 END, candidate.created_at
-      LIMIT 1
-  );
-
-DROP FUNCTION IF EXISTS public.ensure_user_workspace(UUID);
-
-CREATE FUNCTION public.ensure_user_workspace(target_user_id UUID)
+CREATE OR REPLACE FUNCTION public.ensure_user_workspace(target_user_id UUID)
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -27,8 +7,8 @@ AS $$
 DECLARE
     resolved_workspace_id UUID;
 BEGIN
-    IF target_user_id IS NULL THEN
-        RAISE EXCEPTION 'A user ID is required to resolve a workspace.';
+    IF target_user_id IS NULL OR auth.uid() IS DISTINCT FROM target_user_id THEN
+        RAISE EXCEPTION 'The authenticated user can only resolve their own workspace.';
     END IF;
 
     PERFORM pg_advisory_xact_lock(hashtextextended(target_user_id::TEXT, 0));
@@ -70,13 +50,5 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION ensure_user_workspace(UUID) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION ensure_user_workspace(UUID) TO service_role;
-
-DROP POLICY IF EXISTS "Workspace members can connect Instagram accounts" ON ig_accounts;
-CREATE POLICY "Workspace members can connect Instagram accounts"
-    ON ig_accounts FOR INSERT
-    WITH CHECK (
-        workspace_id IS NOT NULL
-        AND is_workspace_member(workspace_id)
-    );
+REVOKE ALL ON FUNCTION public.ensure_user_workspace(UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ensure_user_workspace(UUID) TO authenticated, service_role;
