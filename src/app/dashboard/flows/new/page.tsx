@@ -333,7 +333,10 @@ function NewFlowPageContent() {
           setFlowTitle(record.name);
         }
 
-        setIsActive(record.status === 'published' && record.is_active);
+        setIsActive(
+          (record.status === 'active' || record.status === 'published') &&
+            record.is_active,
+        );
       } catch (error) {
         console.error('Failed to load workflow', error);
         setToast({ type: 'error', message: 'Unable to load this workflow.' });

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/utils/supabase/server';
 
-export type WorkflowStatus = 'draft' | 'published';
+export type WorkflowStatus = 'draft' | 'active' | 'published';
 
 export type FlowData = {
   nodes: Array<Record<string, unknown>>;
@@ -75,12 +75,13 @@ export async function saveWorkflow({
     nodes: Array.isArray(flowData?.nodes) ? (flowData.nodes as Array<Record<string, unknown>>) : [],
     edges: Array.isArray(flowData?.edges) ? (flowData.edges as Array<Record<string, unknown>>) : [],
   };
+  const isPublished = status === 'published' || status === 'active';
 
   const payload = {
     workspace_id: effectiveWorkspaceId,
     name: name?.trim() || 'Untitled Workflow',
-    status,
-    is_active: status === 'published',
+    status: isPublished ? 'active' : 'draft',
+    is_active: isPublished,
     flow_data: normalizedFlowData,
     updated_at: new Date().toISOString(),
   };
@@ -140,7 +141,7 @@ export async function updateWorkflowActiveStatus(id: string, isActive: boolean) 
     .from('workflows')
     .update({
       is_active: isActive,
-      status: isActive ? 'published' : 'draft',
+      status: isActive ? 'active' : 'draft',
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
