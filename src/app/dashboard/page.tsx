@@ -1,8 +1,7 @@
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import DashboardView from "./dashboard-view";
 import type { DashboardViewProps } from "./dashboard-view";
+import { createClient } from "@/utils/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -39,11 +38,11 @@ export default async function DashboardOverview({
 }: {
   searchParams?: DashboardSearchParams;
 }) {
-  let supabase: ReturnType<typeof createServerComponentClient> | null = null;
+  let supabase: ReturnType<typeof createClient> | null = null;
   let user: { id: string } | null = null;
 
   try {
-    supabase = createServerComponentClient({ cookies });
+    supabase = createClient();
     const {
       data: { user: authenticatedUser },
       error,
