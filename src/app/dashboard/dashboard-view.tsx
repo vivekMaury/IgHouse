@@ -13,27 +13,37 @@ import { ConnectInstagramButton } from "@/components/dashboard/connect-instagram
 import { formatInstagramAccountName } from "@/lib/meta/account-display";
 
 export type DashboardViewProps = {
-  workspace: { id: string; name: string; plan_tier: string | null } | null;
-  accounts: Array<{
+  workspace?: { id: string; name: string; plan_tier: string | null } | null;
+  accounts?: Array<{
     id: string;
     username: string | null;
-  }>;
-  stats: {
-    totalFlows: number;
-    executionCount: number;
-    messageCount: number;
-    commentCount: number;
-  };
-  recentActivity: Array<{
+  }> | null;
+  stats?: {
+    totalDms?: number | null;
+    totalComments?: number | null;
+    totalFlows?: number | null;
+    activeFlows?: number | null;
+    executionCount?: number | null;
+    messageCount?: number | null;
+    commentCount?: number | null;
+  } | null;
+  recentActivity?: Array<{
     id: string;
     event_type: string;
     status: string;
     created_at: string;
-  }>;
-  searchParams: {
+  }> | null;
+  searchParams?: {
     instagram?: "connected" | "success" | "error";
     reason?: string;
-  };
+  } | null;
+};
+
+const defaultStats = {
+  totalDms: 0,
+  totalComments: 0,
+  totalFlows: 0,
+  activeFlows: 0,
 };
 
 const connectionMessages: Record<string, string> = {
@@ -59,21 +69,28 @@ function formatActivityTime(value: string) {
 
 export default function DashboardView({
   workspace,
-  accounts,
-  stats: dashboardStats,
-  recentActivity,
-  searchParams,
+  accounts = [],
+  stats: rawStats = defaultStats,
+  recentActivity = [],
+  searchParams = {},
 }: DashboardViewProps) {
-  const connectedAccounts = accounts;
-  const activeWorkflowCount = dashboardStats.totalFlows;
-  const { executionCount, messageCount, commentCount } = dashboardStats;
+  const connectedAccounts = accounts || [];
+  const safeStats = { ...defaultStats, ...(rawStats || {}) };
+  const activeWorkflowCount =
+    rawStats?.activeFlows ?? rawStats?.totalFlows ?? 0;
+  const executionCount = safeStats.executionCount || 0;
+  const messageCount = safeStats.totalDms ?? safeStats.messageCount ?? 0;
+  const commentCount =
+    safeStats.totalComments ?? safeStats.commentCount ?? 0;
+  const safeRecentActivity = recentActivity || [];
+  const safeSearchParams = searchParams || {};
   const isConnected = connectedAccounts.length > 0;
   const displayMetric = (value: number) =>
     isConnected ? value.toLocaleString("en") : "—";
-  const reason = searchParams.reason;
+  const reason = safeSearchParams.reason;
   const connectionError = reason
     ? connectionMessages[reason] ?? connectionMessages.connection_failed
-    : searchParams.instagram === "error"
+    : safeSearchParams.instagram === "error"
       ? connectionMessages.connection_failed
       : null;
   const stats = [
@@ -131,8 +148,8 @@ export default function DashboardView({
         </div>
       </div>
 
-      {(searchParams?.instagram === "connected" ||
-        searchParams?.instagram === "success") && (
+      {(safeSearchParams.instagram === "connected" ||
+        safeSearchParams.instagram === "success") && (
         <div
           className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200"
           role="status"
@@ -149,7 +166,32 @@ export default function DashboardView({
         </div>
       )}
 
-      {isConnected && (
+      {!isConnected ? (
+        <section
+          aria-labelledby="connect-instagram-heading"
+          className="rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/10 via-[#09090b] to-pink-500/10 p-6 sm:p-8"
+        >
+          <div className="mx-auto flex max-w-xl flex-col items-center text-center">
+            <div className="mb-4 rounded-full border border-purple-400/20 bg-purple-400/10 p-4">
+              <Activity aria-hidden="true" className="h-7 w-7 text-purple-300" />
+            </div>
+            <h2
+              className="text-xl font-semibold text-white"
+              id="connect-instagram-heading"
+            >
+              Connect Instagram Account
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-gray-400">
+              Connect a professional Instagram account to view your automation
+              activity, messages, and workflows here.
+            </p>
+            <ConnectInstagramButton
+              className="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:from-purple-500 hover:to-pink-500 disabled:cursor-wait disabled:opacity-60"
+            />
+          </div>
+        </section>
+      ) : (
+        <>
         <section
           aria-label="Connected Instagram accounts"
           className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-[#09090b] p-4"
@@ -157,7 +199,7 @@ export default function DashboardView({
           <span className="text-sm font-medium text-gray-400">
             Connected accounts
           </span>
-          {connectedAccounts.map((account) => (
+          {(connectedAccounts || []).map((account) => (
             <span
               key={account.id}
               className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-sm text-emerald-300"
@@ -166,13 +208,11 @@ export default function DashboardView({
             </span>
           ))}
         </section>
-      )}
-
       <section
         aria-label="Automation metrics"
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
       >
-        {stats.map((stat) => (
+        {(stats || []).map((stat) => (
           <div
             key={stat.label}
             className="group relative overflow-hidden rounded-2xl border border-white/5 bg-[#09090b] p-6"
@@ -237,9 +277,9 @@ export default function DashboardView({
             </Link>
           </div>
 
-          {recentActivity.length > 0 ? (
+          {safeRecentActivity.length > 0 ? (
             <ol className="space-y-5">
-              {recentActivity.map((activity) => {
+              {(safeRecentActivity || []).map((activity) => {
                 const failed = activity.status.toLowerCase() === "failed";
                 return (
                   <li className="relative flex min-w-0 gap-4" key={activity.id}>
@@ -280,6 +320,8 @@ export default function DashboardView({
           )}
         </section>
       </div>
+        </>
+      )}
     </div>
   );
 }

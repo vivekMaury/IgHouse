@@ -22,7 +22,9 @@ const validConnectionReasons = new Set([
   "connection_failed",
 ]);
 
-type InstagramStatus = NonNullable<DashboardViewProps["searchParams"]["instagram"]>;
+type InstagramStatus = NonNullable<
+  NonNullable<DashboardViewProps["searchParams"]>["instagram"]
+>;
 
 function firstValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
