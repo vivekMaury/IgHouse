@@ -1,5 +1,3 @@
-"use client";
-
 import Link from "next/link";
 import {
   Plus,
@@ -166,7 +164,7 @@ export default function DashboardView({
         </div>
       )}
 
-      {!isConnected ? (
+      {!isConnected && (
         <section
           aria-labelledby="connect-instagram-heading"
           className="rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/10 via-[#09090b] to-pink-500/10 p-6 sm:p-8"
@@ -190,8 +188,9 @@ export default function DashboardView({
             />
           </div>
         </section>
-      ) : (
-        <>
+      )}
+
+      {isConnected && (
         <section
           aria-label="Connected Instagram accounts"
           className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-[#09090b] p-4"
@@ -208,6 +207,8 @@ export default function DashboardView({
             </span>
           ))}
         </section>
+      )}
+
       <section
         aria-label="Automation metrics"
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
@@ -320,8 +321,6 @@ export default function DashboardView({
           )}
         </section>
       </div>
-        </>
-      )}
     </div>
   );
 }
