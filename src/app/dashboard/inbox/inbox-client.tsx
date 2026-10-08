@@ -39,13 +39,45 @@ export default function InboxClient({
   const [selectedContact, setSelectedContact] = useState<Contact | null>(
     initialContacts[0] ?? null,
   );
+  const selectedContactRef = useRef<Contact | null>(initialContacts[0] ?? null);
   const [messages, setMessages] = useState(initialMessages);
+  const [contactPreviews, setContactPreviews] = useState<Record<string, string>>({});
   const [replyText, setReplyText] = useState("");
   const [humanOverride, setHumanOverride] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [webhookSetupError, setWebhookSetupError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const supabase = createClient();
+  const [supabase] = useState(createClient);
+
+  useEffect(() => {
+    selectedContactRef.current = selectedContact;
+  }, [selectedContact]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetch("/api/inbox/webhooks/subscribe", { method: "POST" })
+      .then(async (response) => {
+        if (response.ok) return;
+        const result = (await response.json()) as { error?: string };
+        throw new Error(result.error ?? "Instagram live messages could not be enabled.");
+      })
+      .catch((error: unknown) => {
+        console.error("Could not ensure Instagram webhook subscription.", error);
+        if (!cancelled) {
+          setWebhookSetupError(
+            error instanceof Error
+              ? error.message
+              : "Instagram live messages could not be enabled.",
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadMessages = useCallback(async (contactId: string) => {
     const { data, error } = await supabase
@@ -70,33 +102,74 @@ export default function InboxClient({
   }, [supabase]);
 
   useEffect(() => {
-    if (!selectedContact) {
-      setMessages([]);
-      return;
-    }
+    if (selectedContact) void loadMessages(selectedContact.id);
+  }, [loadMessages, selectedContact]);
 
-    const contactId = selectedContact.id;
+  useEffect(() => {
     const channel = supabase
-      .channel(`inbox-${contactId}`)
+      .channel("inbox-messages")
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "conversations",
-          filter: `contact_id=eq.${contactId}`,
         },
-        (payload) => {
+        async (payload) => {
           const incoming = payload.new as Message;
-          setMessages((current) =>
-            current.some((message) => message.id === incoming.id)
-              ? current
-              : [...current, incoming],
+          setContactPreviews((current) => ({
+            ...current,
+            [incoming.contact_id]: incoming.message_body || "New Instagram message",
+          }));
+          setContacts((current) =>
+            current
+              .map((contact) =>
+                contact.id === incoming.contact_id
+                  ? { ...contact, last_interaction_at: incoming.created_at }
+                  : contact,
+              )
+              .sort((left, right) =>
+                (right.last_interaction_at ?? "").localeCompare(
+                  left.last_interaction_at ?? "",
+                ),
+              ),
           );
+
+          if (selectedContactRef.current?.id === incoming.contact_id) {
+            setMessages((current) =>
+              current.some((message) => message.id === incoming.id)
+                ? current
+                : [...current, incoming],
+            );
+            return;
+          }
+
+          const { data: contact, error } = await supabase
+            .from("contacts")
+            .select("id, username, tags, last_interaction_at")
+            .eq("id", incoming.contact_id)
+            .maybeSingle();
+
+          if (error) {
+            console.error("Could not load contact for a new inbox message.", error);
+            return;
+          }
+          if (!contact) return;
+
+          const refreshedContact: Contact = {
+            id: contact.id,
+            username: contact.username ?? "Unknown User",
+            tags: contact.tags ?? [],
+            last_interaction_at: contact.last_interaction_at,
+          };
+          setContacts((current) => [
+            refreshedContact,
+            ...current.filter((item) => item.id !== refreshedContact.id),
+          ]);
+          setSelectedContact((current) => current ?? refreshedContact);
         },
       )
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") void loadMessages(contactId);
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           console.error("Live Inbox realtime subscription failed.", { status });
           setSendError("Live updates are unavailable. Refresh the page to check for new messages.");
@@ -106,7 +179,7 @@ export default function InboxClient({
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [loadMessages, selectedContact, supabase]);
+  }, [supabase]);
 
   useEffect(() => {
     const channel = supabase
@@ -161,7 +234,15 @@ export default function InboxClient({
                   last_interaction_at:
                     updated.last_interaction_at ?? current.last_interaction_at,
                 }
-              : current,
+              : current ??
+                (payload.eventType === "INSERT"
+                  ? {
+                      id: updatedId,
+                      username: updated.username ?? "Unknown User",
+                      tags: updated.tags ?? [],
+                      last_interaction_at: updated.last_interaction_at ?? null,
+                    }
+                  : current),
           );
         },
       )
@@ -187,7 +268,7 @@ export default function InboxClient({
     setIsSending(true);
     setSendError(null);
     try {
-      const response = await fetch("/api/inbox/messages", {
+      const response = await fetch("/api/messages/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -232,6 +313,11 @@ export default function InboxClient({
               {loadError}
             </p>
           )}
+          {webhookSetupError && (
+            <p className="m-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200" role="alert">
+              {webhookSetupError}
+            </p>
+          )}
           {contacts.map((contact) => (
             <button
               type="button"
@@ -239,6 +325,11 @@ export default function InboxClient({
               onClick={() => {
                 setSelectedContact(contact);
                 setMessages([]);
+                setContactPreviews((current) => {
+                  const next = { ...current };
+                  delete next[contact.id];
+                  return next;
+                });
                 setSendError(null);
               }}
               className={`flex w-full items-center gap-3 border-b border-slate-100 p-4 text-left transition-colors hover:bg-slate-100 dark:border-slate-800/50 dark:hover:bg-slate-800 ${
@@ -263,6 +354,11 @@ export default function InboxClient({
                       )
                     : "Never"}
                 </div>
+                {contactPreviews[contact.id] && (
+                  <div className="mt-1 truncate text-xs text-blue-500">
+                    {contactPreviews[contact.id]}
+                  </div>
+                )}
               </div>
             </button>
           ))}

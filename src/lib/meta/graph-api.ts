@@ -188,6 +188,43 @@ export async function sendInstagramDM(
   }, options);
 }
 
+export async function subscribeInstagramMessages(
+  instagramAccountId: string,
+  options: GraphApiOptions,
+) {
+  const version =
+    options.apiVersion ?? process.env.META_GRAPH_API_VERSION ?? 'v23.0';
+  const url = new URL(
+    `https://graph.facebook.com/${version}/${encodeURIComponent(instagramAccountId)}/subscribed_apps`,
+  );
+  url.searchParams.set('subscribed_fields', 'messages,messaging_postbacks');
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${options.accessToken}` },
+    cache: 'no-store',
+  });
+  const body: unknown = await response.json().catch(() => null);
+  const graphError =
+    typeof body === 'object' && body !== null && 'error' in body
+      ? (body as { error?: { message?: string } }).error
+      : undefined;
+
+  if (
+    !response.ok ||
+    graphError ||
+    !body ||
+    typeof body !== 'object' ||
+    !('success' in body) ||
+    body.success !== true
+  ) {
+    const message =
+      graphError?.message ??
+      `Meta did not confirm the Instagram messaging webhook subscription (HTTP ${response.status}).`;
+    throw new Error(message);
+  }
+}
+
 export async function replyToInstagramComment(
   commentId: string,
   messageText: string,
