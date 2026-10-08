@@ -1,12 +1,11 @@
 export function formatInstagramAccountName(
   username: string | null | undefined,
-  accountId: string,
+  instagramAccountId: string | null | undefined,
 ): string {
   const name = username?.trim();
-  if (!name || /^\d+$/.test(name)) {
-    return `@ig_account_${accountId.slice(-4)}`;
-  }
-
-  if (/\s/.test(name)) return name;
-  return name.startsWith("@") ? name : `@${name}`;
+  return name
+    ? name.startsWith("@")
+      ? name
+      : `@${name}`
+    : `@ig_account_${instagramAccountId?.slice(-4) || "connected"}`;
 }
