@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   Bot,
   Clock,
   LoaderCircle,
   MessageSquare,
+  RefreshCw,
   Send,
   User,
   UserRound,
@@ -40,6 +42,13 @@ type SendMessageResponse = {
   error?: string;
 };
 
+type SyncMessagesResponse = {
+  success?: boolean;
+  syncedConversations?: number;
+  syncedMessages?: number;
+  error?: string;
+};
+
 export default function InboxClient({
   initialContacts,
   initialMessages,
@@ -47,10 +56,8 @@ export default function InboxClient({
   accountsNeedingSubscription = [],
 }: InboxClientProps) {
   const [contacts, setContacts] = useState(initialContacts);
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(
-    initialContacts[0] ?? null,
-  );
-  const selectedContactRef = useRef<Contact | null>(initialContacts[0] ?? null);
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const selectedContactRef = useRef<Contact | null>(null);
   const [messages, setMessages] = useState(initialMessages);
   const [contactPreviews, setContactPreviews] = useState<Record<string, string>>({});
   const [replyText, setReplyText] = useState("");
@@ -61,6 +68,8 @@ export default function InboxClient({
   const [subscriptionDismissed, setSubscriptionDismissed] = useState(true);
   const [isRetryingSubscription, setIsRetryingSubscription] = useState(false);
   const [subscriptionToast, setSubscriptionToast] = useState<string | null>(null);
+  const [isSyncingMessages, setIsSyncingMessages] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [supabase] = useState(createClient);
@@ -68,6 +77,18 @@ export default function InboxClient({
   useEffect(() => {
     selectedContactRef.current = selectedContact;
   }, [selectedContact]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 768px)");
+    const selectInitialContact = () => {
+      if (media.matches) {
+        setSelectedContact((current) => current ?? initialContacts[0] ?? null);
+      }
+    };
+    selectInitialContact();
+    media.addEventListener("change", selectInitialContact);
+    return () => media.removeEventListener("change", selectInitialContact);
+  }, [initialContacts]);
 
   useEffect(() => {
     try {
@@ -153,7 +174,57 @@ export default function InboxClient({
 
   useEffect(() => {
     if (selectedContact) void loadMessages(selectedContact.id);
+    else setMessages([]);
   }, [loadMessages, selectedContact]);
+
+  const syncHistoricalMessages = async () => {
+    if (isSyncingMessages) return;
+    setIsSyncingMessages(true);
+    setSyncError(null);
+    try {
+      const response = await fetch("/api/instagram/sync-messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const result = (await response.json()) as SyncMessagesResponse;
+      if (!response.ok || result.success !== true) {
+        throw new Error(result.error ?? "Instagram messages could not be synchronized.");
+      }
+
+      const { data: refreshedContacts, error: contactsError } = await supabase
+        .from("contacts")
+        .select("id, username, tags, last_interaction_at")
+        .order("last_interaction_at", { ascending: false, nullsFirst: false });
+      if (contactsError) throw contactsError;
+
+      const nextContacts: Contact[] = (refreshedContacts ?? []).map((contact) => ({
+        id: contact.id,
+        username: contact.username ?? "Unknown User",
+        tags: contact.tags ?? [],
+        last_interaction_at: contact.last_interaction_at,
+      }));
+      setContacts(nextContacts);
+
+      const activeContact = selectedContactRef.current;
+      if (activeContact) {
+        await loadMessages(activeContact.id);
+      }
+      setSubscriptionToast(
+        `Synced ${result.syncedMessages ?? 0} Instagram messages.`,
+      );
+      window.setTimeout(() => setSubscriptionToast(null), 4000);
+    } catch (error) {
+      console.error("Could not sync Instagram historical messages.", error);
+      setSyncError(
+        error instanceof Error
+          ? error.message
+          : "Instagram messages could not be synchronized.",
+      );
+    } finally {
+      setIsSyncingMessages(false);
+    }
+  };
 
   useEffect(() => {
     const channel = supabase
@@ -194,29 +265,6 @@ export default function InboxClient({
             return;
           }
 
-          const { data: contact, error } = await supabase
-            .from("contacts")
-            .select("id, username, tags, last_interaction_at")
-            .eq("id", incoming.contact_id)
-            .maybeSingle();
-
-          if (error) {
-            console.error("Could not load contact for a new inbox message.", error);
-            return;
-          }
-          if (!contact) return;
-
-          const refreshedContact: Contact = {
-            id: contact.id,
-            username: contact.username ?? "Unknown User",
-            tags: contact.tags ?? [],
-            last_interaction_at: contact.last_interaction_at,
-          };
-          setContacts((current) => [
-            refreshedContact,
-            ...current.filter((item) => item.id !== refreshedContact.id),
-          ]);
-          setSelectedContact((current) => current ?? refreshedContact);
         },
       )
       .subscribe((status) => {
@@ -284,15 +332,7 @@ export default function InboxClient({
                   last_interaction_at:
                     updated.last_interaction_at ?? current.last_interaction_at,
                 }
-              : current ??
-                (payload.eventType === "INSERT"
-                  ? {
-                      id: updatedId,
-                      username: updated.username ?? "Unknown User",
-                      tags: updated.tags ?? [],
-                      last_interaction_at: updated.last_interaction_at ?? null,
-                    }
-                  : current),
+              : current,
           );
         },
       )
@@ -352,7 +392,7 @@ export default function InboxClient({
   };
 
   return (
-    <div className="flex h-[calc(100vh-2rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="flex h-[calc(100dvh-2rem)] min-h-[28rem] w-full min-w-0 flex-col overflow-x-hidden overflow-y-hidden rounded-xl border border-white/10 bg-[#0a0a0c] text-slate-100 shadow-xl">
       {subscriptionToast && (
         <div
           className="fixed right-5 top-5 z-50 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-lg"
@@ -362,214 +402,270 @@ export default function InboxClient({
           {subscriptionToast}
         </div>
       )}
-      <div className="flex w-80 shrink-0 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950">
-        <div className="border-b border-slate-200 bg-white p-5 text-lg font-semibold text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
-          Live Inbox
+
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-zinc-950/80 px-4 py-3 sm:px-6">
+        <div className="min-w-0">
+          <h1 className="truncate text-lg font-semibold text-white">Live Inbox</h1>
+          <p className="hidden text-xs text-slate-400 sm:block">
+            Instagram conversations
+          </p>
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <button
+          type="button"
+          onClick={() => void syncHistoricalMessages()}
+          disabled={isSyncingMessages}
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
+        >
+          <RefreshCw
+            size={16}
+            className={isSyncingMessages ? "animate-spin" : ""}
+          />
+          <span>{isSyncingMessages ? "Syncing..." : "Sync DMs"}</span>
+        </button>
+      </header>
+
+      {syncError && (
+        <p className="shrink-0 border-b border-red-900/60 bg-red-950/50 px-4 py-2 text-sm text-red-200" role="alert">
+          {syncError}
+        </p>
+      )}
+
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-12">
+        <aside
+          className={`${
+            selectedContact ? "hidden md:flex" : "flex"
+          } min-h-0 min-w-0 flex-col overflow-hidden border-r border-white/10 bg-zinc-950/70 md:col-span-4 lg:col-span-3`}
+        >
           {loadError && (
-            <p className="m-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300" role="alert">
+            <p className="m-3 rounded-lg border border-red-900/60 bg-red-950/50 p-3 text-sm text-red-200" role="alert">
               {loadError}
             </p>
           )}
-          {!subscriptionDismissed &&
-            subscriptionAccountIds.length > 0 && (
-              <div
-                className="m-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-200"
-                role="status"
-              >
-                <div className="flex items-start gap-2">
-                  <AlertTriangle size={17} className="mt-0.5 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p>
-                      {webhookSetupError ??
-                        "Instagram message events are not enabled. You can still view existing conversations."}
-                    </p>
-                    <div className="mt-3 flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void retrySubscription()}
-                        disabled={isRetryingSubscription}
-                        className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        {isRetryingSubscription && (
-                          <LoaderCircle size={14} className="animate-spin" />
-                        )}
-                        Retry Subscription
-                      </button>
-                      <button
-                        type="button"
-                        onClick={dismissSubscriptionBanner}
-                        className="inline-flex items-center gap-1 text-xs font-medium hover:underline"
-                      >
-                        Dismiss
-                      </button>
-                    </div>
+          {!subscriptionDismissed && subscriptionAccountIds.length > 0 && (
+            <div className="m-3 rounded-lg border border-amber-700/40 bg-amber-950/40 p-3 text-sm text-amber-100" role="status">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p>
+                    {webhookSetupError ??
+                      "Instagram message events are not enabled. You can still view existing conversations."}
+                  </p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void retrySubscription()}
+                      disabled={isRetryingSubscription}
+                      className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {isRetryingSubscription && (
+                        <LoaderCircle size={14} className="animate-spin" />
+                      )}
+                      Retry Subscription
+                    </button>
+                    <button
+                      type="button"
+                      onClick={dismissSubscriptionBanner}
+                      className="text-xs font-medium text-amber-200 hover:text-white hover:underline"
+                    >
+                      Dismiss
+                    </button>
                   </div>
                 </div>
               </div>
-            )}
-          {contacts.map((contact) => (
-            <button
-              type="button"
-              key={contact.id}
-              onClick={() => {
-                setSelectedContact(contact);
-                setMessages([]);
-                setContactPreviews((current) => {
-                  const next = { ...current };
-                  delete next[contact.id];
-                  return next;
-                });
-                setSendError(null);
-              }}
-              className={`flex w-full items-center gap-3 border-b border-slate-100 p-4 text-left transition-colors hover:bg-slate-100 dark:border-slate-800/50 dark:hover:bg-slate-800 ${
-                selectedContact?.id === contact.id
-                  ? "border-l-4 border-l-blue-500 bg-blue-50/50 dark:bg-blue-900/10"
-                  : "border-l-4 border-l-transparent"
-              }`}
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800">
-                <User size={20} className="text-slate-500" />
-              </div>
-              <div className="overflow-hidden">
-                <div className="truncate font-medium text-slate-900 dark:text-slate-100">
-                  {contact.username || "Unknown User"}
-                </div>
-                <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
-                  <Clock size={12} />
-                  {contact.last_interaction_at
-                    ? new Date(contact.last_interaction_at).toLocaleTimeString(
-                        [],
-                        { hour: "2-digit", minute: "2-digit" },
-                      )
-                    : "Never"}
-                </div>
-                {contactPreviews[contact.id] && (
-                  <div className="mt-1 truncate text-xs text-blue-500">
-                    {contactPreviews[contact.id]}
-                  </div>
-                )}
-              </div>
-            </button>
-          ))}
-          {contacts.length === 0 && (
-            <div className="p-6 text-center text-sm text-slate-500">
-              No conversations yet. New Instagram messages will appear here.
             </div>
           )}
-        </div>
-      </div>
 
-      <div className="flex min-w-0 flex-1 flex-col bg-white dark:bg-slate-900">
-        {selectedContact ? (
-          <>
-            <div className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
-                  <User size={16} className="text-slate-500" />
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-900 dark:text-slate-100">
-                    {selectedContact.username || "Unknown User"}
-                  </div>
-                  <div className="mt-0.5 flex gap-1">
-                    {selectedContact.tags?.map((tag) => (
-                      <span
-                        key={tag}
-                        className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {contacts.map((contact) => (
               <button
                 type="button"
-                onClick={() => setHumanOverride((active) => !active)}
-                className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition-colors ${
-                  humanOverride
-                    ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-400"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                key={contact.id}
+                onClick={() => {
+                  setSelectedContact(contact);
+                  setMessages([]);
+                  setContactPreviews((current) => {
+                    const next = { ...current };
+                    delete next[contact.id];
+                    return next;
+                  });
+                  setSendError(null);
+                }}
+                className={`flex w-full min-w-0 items-center gap-3 border-b border-white/[0.06] px-4 py-4 text-left transition-colors hover:bg-white/[0.06] ${
+                  selectedContact?.id === contact.id
+                    ? "border-l-2 border-l-blue-500 bg-blue-500/10"
+                    : "border-l-2 border-l-transparent"
                 }`}
               >
-                {humanOverride ? <UserRound size={16} /> : <Bot size={16} />}
-                {humanOverride ? "Human Override" : "Bot Active"}
-              </button>
-            </div>
-
-            <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/50 p-6 dark:bg-slate-950/30">
-              {messages.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-sm text-slate-400">
-                  No messages yet.
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10">
+                  <User size={20} className="text-slate-300" />
                 </div>
-              ) : (
-                messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${
-                      message.direction === "outbound"
-                        ? "justify-end"
-                        : "justify-start"
-                    }`}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-slate-100">
+                    {contact.username || "Unknown User"}
+                  </div>
+                  <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
+                    <Clock size={12} />
+                    {contact.last_interaction_at
+                      ? new Date(contact.last_interaction_at).toLocaleTimeString(
+                          [],
+                          { hour: "2-digit", minute: "2-digit" },
+                        )
+                      : "Never"}
+                  </div>
+                  {contactPreviews[contact.id] && (
+                    <div className="mt-1 truncate text-xs text-blue-300">
+                      {contactPreviews[contact.id]}
+                    </div>
+                  )}
+                </div>
+              </button>
+            ))}
+            {contacts.length === 0 && (
+              <div className="p-6 text-center text-sm text-slate-400">
+                No conversations yet. Sync DMs or wait for new Instagram messages.
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <section
+          className={`${
+            selectedContact ? "flex" : "hidden md:flex"
+          } min-h-0 min-w-0 flex-col overflow-hidden bg-[#0a0a0c] md:col-span-8 lg:col-span-9`}
+        >
+          {selectedContact ? (
+            <>
+              <div className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-zinc-950/60 px-3 py-3 sm:px-6">
+                <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedContact(null);
+                      setMessages([]);
+                    }}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-2 text-sm text-slate-300 hover:bg-white/10 hover:text-white md:hidden"
+                    aria-label="Back to Inbox"
                   >
-                    <div
-                      className={`max-w-[70%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
-                        message.direction === "outbound"
-                          ? "rounded-br-sm bg-blue-600 text-white"
-                          : "rounded-bl-sm border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      }`}
-                    >
-                      {message.message_body}
+                    <ArrowLeft size={18} />
+                    <span>Back to Inbox</span>
+                  </button>
+                  <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 sm:flex">
+                    <User size={17} className="text-slate-300" />
+                  </div>
+                  <div className="hidden min-w-0 sm:block">
+                    <div className="truncate font-semibold text-white">
+                      {selectedContact.username || "Unknown User"}
+                    </div>
+                    <div className="mt-1 flex gap-1">
+                      {selectedContact.tags?.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-medium text-slate-300"
+                        >
+                          {tag}
+                        </span>
+                      ))}
                     </div>
                   </div>
-                ))
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <div className="shrink-0 border-t border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-              {sendError && (
-                <p className="mb-2 text-sm text-red-600" role="alert">
-                  {sendError}
-                </p>
-              )}
-              <form
-                className="flex gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void handleSend();
-                }}
-              >
-                <input
-                  type="text"
-                  value={replyText}
-                  onChange={(event) => setReplyText(event.target.value)}
-                  onFocus={() => setHumanOverride(true)}
-                  placeholder="Type an Instagram message..."
-                  maxLength={1000}
-                  disabled={isSending}
-                  className="flex-1 rounded-lg bg-slate-100 px-4 py-2.5 text-sm outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-900"
-                  aria-label="Message text"
-                />
+                  <div className="truncate font-semibold text-white sm:hidden">
+                    {selectedContact.username || "Unknown User"}
+                  </div>
+                </div>
                 <button
-                  type="submit"
-                  disabled={!replyText.trim() || isSending}
-                  className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-50"
+                  type="button"
+                  onClick={() => setHumanOverride((active) => !active)}
+                  className={`inline-flex shrink-0 items-center gap-2 rounded-md border px-2.5 py-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm ${
+                    humanOverride
+                      ? "border-amber-700/50 bg-amber-900/30 text-amber-200"
+                      : "border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white"
+                  }`}
                 >
-                  <Send size={18} />
-                  <span className="sr-only">{isSending ? "Sending" : "Send"}</span>
+                  {humanOverride ? <UserRound size={16} /> : <Bot size={16} />}
+                  <span className="hidden sm:inline">
+                    {humanOverride ? "Human Override" : "Bot Active"}
+                  </span>
                 </button>
-              </form>
+              </div>
+
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden bg-black/20 p-3 sm:p-6">
+                {messages.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                    No messages yet.
+                  </div>
+                ) : (
+                  messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`flex min-w-0 ${
+                        message.direction === "outbound"
+                          ? "justify-end"
+                          : "justify-start"
+                      }`}
+                    >
+                      <div
+                        className={`max-w-[85%] break-words rounded-2xl px-4 py-2.5 text-sm shadow-sm sm:max-w-[70%] ${
+                          message.direction === "outbound"
+                            ? "rounded-br-sm bg-blue-600 text-white"
+                            : "rounded-bl-sm border border-white/10 bg-zinc-900 text-slate-100"
+                        }`}
+                      >
+                        {message.message_body}
+                      </div>
+                    </div>
+                  ))
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div className="shrink-0 border-t border-white/10 bg-zinc-950/70 p-3 sm:p-4">
+                {sendError && (
+                  <p className="mb-2 text-sm text-red-300" role="alert">
+                    {sendError}
+                  </p>
+                )}
+                <form
+                  className="flex min-w-0 gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleSend();
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={replyText}
+                    onChange={(event) => setReplyText(event.target.value)}
+                    onFocus={() => setHumanOverride(true)}
+                    placeholder="Type an Instagram message..."
+                    maxLength={1000}
+                    disabled={isSending}
+                    className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 disabled:opacity-60"
+                    aria-label="Message text"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!replyText.trim() || isSending}
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-wait disabled:opacity-50 sm:px-5"
+                    aria-label={isSending ? "Sending message" : "Send message"}
+                  >
+                    {isSending ? (
+                      <LoaderCircle size={18} className="animate-spin" />
+                    ) : (
+                      <Send size={18} />
+                    )}
+                    <span className="hidden sm:inline">
+                      {isSending ? "Sending" : "Send"}
+                    </span>
+                  </button>
+                </form>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-slate-400">
+              <MessageSquare size={48} className="text-slate-600" />
+              <p>Select a conversation to view messages</p>
             </div>
-          </>
-        ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-slate-400">
-            <MessageSquare size={48} className="text-slate-300 dark:text-slate-700" />
-            <p>Select a contact to view conversation</p>
-          </div>
-        )}
+          )}
+        </section>
       </div>
     </div>
   );
