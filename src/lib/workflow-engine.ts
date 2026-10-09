@@ -40,12 +40,61 @@ type FlowEdge = {
 
 type FlowData = { nodes: FlowNode[]; edges: FlowEdge[] };
 
+type InstagramSenderProfile = {
+  name: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
 function textValue(value: unknown) {
   return typeof value === 'string' ? value : '';
+}
+
+function extractInstagramMessageText(message: Record<string, unknown>) {
+  const text = textValue(message.text);
+  if (text) return text;
+
+  const attachments = Array.isArray(message.attachments)
+    ? message.attachments.map(asRecord)
+    : [];
+  const attachmentText = attachments
+    .map((attachment) => {
+      if (attachment.type === 'sticker') return '[Sticker]';
+      if (typeof attachment.type === 'string') return '[Media/Image]';
+      return '';
+    })
+    .filter(Boolean);
+  return attachmentText.join(' ') || '';
+}
+
+async function resolveInstagramSenderProfile(
+  senderId: string,
+  accessToken: string,
+): Promise<InstagramSenderProfile> {
+  const version = process.env.META_GRAPH_API_VERSION ?? 'v19.0';
+  const url = new URL(
+    `https://graph.facebook.com/${version}/${encodeURIComponent(senderId)}`,
+  );
+  url.searchParams.set('fields', 'id,name,username,profile_pic');
+  url.searchParams.set('access_token', accessToken);
+  const response = await fetch(url, { cache: 'no-store' });
+  const body: unknown = await response.json().catch(() => null);
+  const profile = asRecord(body);
+  if (!response.ok || Object.keys(asRecord(profile.error)).length > 0) {
+    const error = asRecord(profile.error);
+    throw new Error(
+      textValue(error.message) || `Instagram sender profile lookup failed (HTTP ${response.status}).`,
+    );
+  }
+  return {
+    name: textValue(profile.name) || null,
+    username: textValue(profile.username) || null,
+    avatarUrl: textValue(profile.profile_pic) || null,
+  };
 }
 
 export function extractInstagramEvents(payload: Record<string, unknown>): InstagramEvent[] {
@@ -110,7 +159,7 @@ export function extractInstagramEvents(payload: Record<string, unknown>): Instag
           senderId,
           recipientId: recipientId || null,
           eventType,
-          textContent: textValue(message.text),
+          textContent: extractInstagramMessageText(message),
           userHandle: textValue(sender.username) || textValue(sender.name) || null,
           mediaId: null,
           postId: null,
@@ -647,14 +696,14 @@ async function persistIncomingInstagramEvents(
   for (const event of events) {
     let { data: account, error: accountError } = await supabase
       .from('ig_accounts')
-      .select('id')
+      .select('id, instagram_page_id, instagram_account_id, access_token_encrypted')
       .eq('instagram_account_id', event.instagramAccountId)
       .eq('is_active', true)
       .maybeSingle();
     if (!account && !accountError) {
       const pageAccount = await supabase
         .from('ig_accounts')
-        .select('id')
+        .select('id, instagram_page_id, instagram_account_id, access_token_encrypted')
         .eq('instagram_page_id', event.instagramAccountId)
         .eq('is_active', true)
         .maybeSingle();
@@ -669,13 +718,39 @@ async function persistIncomingInstagramEvents(
       continue;
     }
 
+    let senderProfile: InstagramSenderProfile = {
+      name: null,
+      username: event.userHandle,
+      avatarUrl: null,
+    };
+    if (account.access_token_encrypted) {
+      try {
+        senderProfile = await resolveInstagramSenderProfile(
+          event.senderId,
+          decryptPageAccessToken(account.access_token_encrypted),
+        );
+      } catch (error) {
+        console.warn('Could not resolve Instagram webhook sender profile.', {
+          senderId: event.senderId,
+          error,
+        });
+      }
+    }
+    const senderName = senderProfile.name;
+    const senderUsername = senderProfile.username ?? event.userHandle;
+    const messageText = event.textContent || '[Media/Image]';
+
     const { data: contact, error: contactError } = await supabase
       .from('contacts')
       .upsert(
         {
           ig_account_id: account.id,
           ig_scoped_user_id: event.senderId,
-          username: event.userHandle ?? event.senderId,
+          sender_id: event.senderId,
+          sender_name: senderName,
+          sender_username: senderUsername,
+          sender_avatar_url: senderProfile.avatarUrl,
+          username: senderUsername ?? senderName ?? event.senderId,
           last_interaction_at: new Date().toISOString(),
         },
         { onConflict: 'ig_account_id,ig_scoped_user_id' },
@@ -690,7 +765,13 @@ async function persistIncomingInstagramEvents(
         {
           contact_id: contact.id,
           direction: 'inbound',
-          message_body: event.textContent,
+          message_body: messageText,
+          message_text: messageText,
+          sender_id: event.senderId,
+          sender_name: senderName,
+          sender_username: senderUsername,
+          sender_avatar_url: senderProfile.avatarUrl,
+          is_from_user: true,
           external_event_id: event.eventId,
           metadata: {
             event_type: event.eventType,

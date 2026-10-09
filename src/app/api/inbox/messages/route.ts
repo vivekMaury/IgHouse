@@ -112,6 +112,9 @@ export async function POST(request: NextRequest) {
         contact_id: contact.id,
         direction: "outbound",
         message_body: messageText,
+        message_text: messageText,
+        sender_id: account.instagram_account_id,
+        is_from_user: false,
         external_event_id: externalMessageId,
         metadata: {
           source: "live_inbox",
@@ -120,7 +123,7 @@ export async function POST(request: NextRequest) {
         },
         created_at: sentAt,
       })
-      .select("id, contact_id, direction, message_body, created_at")
+      .select("id, contact_id, direction, message_body, message_text, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, created_at")
       .single();
 
     if (saveError) {
@@ -135,7 +138,7 @@ export async function POST(request: NextRequest) {
       message: {
         ...savedMessage,
         direction: "outbound",
-        message_body: savedMessage.message_body ?? messageText,
+        message_body: savedMessage.message_text ?? savedMessage.message_body ?? messageText,
       },
     });
   } catch (error) {

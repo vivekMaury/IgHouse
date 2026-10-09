@@ -18,6 +18,10 @@ import { createClient } from "@/utils/supabase/client";
 export type Contact = {
   id: string;
   username: string;
+  sender_id?: string | null;
+  sender_name?: string | null;
+  sender_username?: string | null;
+  sender_avatar_url?: string | null;
   tags: string[];
   last_interaction_at: string | null;
 };
@@ -27,6 +31,12 @@ export type Message = {
   contact_id: string;
   direction: "inbound" | "outbound";
   message_body: string;
+  message_text?: string | null;
+  sender_id?: string | null;
+  sender_name?: string | null;
+  sender_username?: string | null;
+  sender_avatar_url?: string | null;
+  is_from_user?: boolean | null;
   created_at: string;
 };
 
@@ -153,7 +163,7 @@ export default function InboxClient({
   const loadMessages = useCallback(async (contactId: string) => {
     const { data, error } = await supabase
       .from("conversations")
-      .select("id, contact_id, direction, message_body, created_at")
+      .select("id, contact_id, direction, message_body, message_text, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, created_at")
       .eq("contact_id", contactId)
       .order("created_at", { ascending: true });
 
@@ -167,7 +177,7 @@ export default function InboxClient({
       (data ?? []).map((message) => ({
         ...message,
         direction: message.direction === "outbound" ? "outbound" : "inbound",
-        message_body: message.message_body ?? "",
+        message_body: message.message_text ?? message.message_body ?? "",
       })),
     );
   }, [supabase]);
@@ -194,13 +204,22 @@ export default function InboxClient({
 
       const { data: refreshedContacts, error: contactsError } = await supabase
         .from("contacts")
-        .select("id, username, tags, last_interaction_at")
+        .select("id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at")
         .order("last_interaction_at", { ascending: false, nullsFirst: false });
       if (contactsError) throw contactsError;
 
       const nextContacts: Contact[] = (refreshedContacts ?? []).map((contact) => ({
         id: contact.id,
-        username: contact.username ?? "Unknown User",
+        username:
+          contact.sender_name ??
+          contact.sender_username ??
+          contact.username ??
+          contact.sender_id ??
+          "Unknown User",
+        sender_id: contact.sender_id,
+        sender_name: contact.sender_name,
+        sender_username: contact.sender_username,
+        sender_avatar_url: contact.sender_avatar_url,
         tags: contact.tags ?? [],
         last_interaction_at: contact.last_interaction_at,
       }));
@@ -238,9 +257,13 @@ export default function InboxClient({
         },
         async (payload) => {
           const incoming = payload.new as Message;
+          const normalizedIncoming = {
+            ...incoming,
+            message_body: incoming.message_text ?? incoming.message_body ?? "",
+          };
           setContactPreviews((current) => ({
             ...current,
-            [incoming.contact_id]: incoming.message_body || "New Instagram message",
+            [incoming.contact_id]: normalizedIncoming.message_body || "New Instagram message",
           }));
           setContacts((current) =>
             current
@@ -260,11 +283,40 @@ export default function InboxClient({
             setMessages((current) =>
               current.some((message) => message.id === incoming.id)
                 ? current
-                : [...current, incoming],
+                : [...current, normalizedIncoming],
             );
-            return;
           }
 
+          const { data: refreshedContact, error: contactError } = await supabase
+            .from("contacts")
+            .select("id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at")
+            .eq("id", incoming.contact_id)
+            .maybeSingle();
+          if (contactError) {
+            console.error("Could not refresh contact for a new inbox message.", contactError);
+            return;
+          }
+          if (refreshedContact) {
+            const contact: Contact = {
+              id: refreshedContact.id,
+              username:
+                refreshedContact.sender_name ??
+                refreshedContact.sender_username ??
+                refreshedContact.username ??
+                refreshedContact.sender_id ??
+                "Unknown User",
+              sender_id: refreshedContact.sender_id,
+              sender_name: refreshedContact.sender_name,
+              sender_username: refreshedContact.sender_username,
+              sender_avatar_url: refreshedContact.sender_avatar_url,
+              tags: refreshedContact.tags ?? [],
+              last_interaction_at: refreshedContact.last_interaction_at,
+            };
+            setContacts((current) => [
+              contact,
+              ...current.filter((item) => item.id !== contact.id),
+            ]);
+          }
         },
       )
       .subscribe((status) => {
@@ -298,7 +350,16 @@ export default function InboxClient({
             if (!exists && payload.eventType === "INSERT") {
               const newContact: Contact = {
                 id: updatedId,
-                username: updated.username ?? "Unknown User",
+                username:
+                  updated.sender_name ??
+                  updated.sender_username ??
+                  updated.username ??
+                  updated.sender_id ??
+                  "Unknown User",
+                sender_id: updated.sender_id,
+                sender_name: updated.sender_name,
+                sender_username: updated.sender_username,
+                sender_avatar_url: updated.sender_avatar_url,
                 tags: updated.tags ?? [],
                 last_interaction_at: updated.last_interaction_at ?? null,
               };
@@ -309,7 +370,18 @@ export default function InboxClient({
                 contact.id === updatedId
                   ? {
                       ...contact,
-                      username: updated.username ?? contact.username,
+                      username:
+                        updated.sender_name ??
+                        updated.sender_username ??
+                        updated.username ??
+                        updated.sender_id ??
+                        contact.username,
+                      sender_id: updated.sender_id ?? contact.sender_id,
+                      sender_name: updated.sender_name ?? contact.sender_name,
+                      sender_username:
+                        updated.sender_username ?? contact.sender_username,
+                      sender_avatar_url:
+                        updated.sender_avatar_url ?? contact.sender_avatar_url,
                       tags: updated.tags ?? contact.tags,
                       last_interaction_at:
                         updated.last_interaction_at ?? contact.last_interaction_at,
@@ -327,7 +399,18 @@ export default function InboxClient({
             current?.id === updatedId
               ? {
                   ...current,
-                  username: updated.username ?? current.username,
+                  username:
+                    updated.sender_name ??
+                    updated.sender_username ??
+                    updated.username ??
+                    updated.sender_id ??
+                    current.username,
+                  sender_id: updated.sender_id ?? current.sender_id,
+                  sender_name: updated.sender_name ?? current.sender_name,
+                  sender_username:
+                    updated.sender_username ?? current.sender_username,
+                  sender_avatar_url:
+                    updated.sender_avatar_url ?? current.sender_avatar_url,
                   tags: updated.tags ?? current.tags,
                   last_interaction_at:
                     updated.last_interaction_at ?? current.last_interaction_at,
@@ -497,7 +580,15 @@ export default function InboxClient({
                 }`}
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10">
-                  <User size={20} className="text-slate-300" />
+                  {contact.sender_avatar_url ? (
+                    <img
+                      src={contact.sender_avatar_url}
+                      alt=""
+                      className="h-10 w-10 rounded-full object-cover"
+                    />
+                  ) : (
+                    <User size={20} className="text-slate-300" />
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium text-slate-100">
@@ -549,12 +640,24 @@ export default function InboxClient({
                     <ArrowLeft size={18} />
                     <span>Back to Inbox</span>
                   </button>
-                  <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 sm:flex">
-                    <User size={17} className="text-slate-300" />
+                  <div className="hidden h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10 sm:flex">
+                    {selectedContact.sender_avatar_url ? (
+                      <img
+                        src={selectedContact.sender_avatar_url}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <User size={17} className="text-slate-300" />
+                    )}
                   </div>
                   <div className="hidden min-w-0 sm:block">
                     <div className="truncate font-semibold text-white">
-                      {selectedContact.username || "Unknown User"}
+                      {selectedContact.sender_name ||
+                        selectedContact.sender_username ||
+                        selectedContact.sender_id ||
+                        selectedContact.username ||
+                        "Instagram User"}
                     </div>
                     <div className="mt-1 flex gap-1">
                       {selectedContact.tags?.map((tag) => (
@@ -568,7 +671,11 @@ export default function InboxClient({
                     </div>
                   </div>
                   <div className="truncate font-semibold text-white sm:hidden">
-                    {selectedContact.username || "Unknown User"}
+                    {selectedContact.sender_name ||
+                      selectedContact.sender_username ||
+                      selectedContact.sender_id ||
+                      selectedContact.username ||
+                      "Instagram User"}
                   </div>
                 </div>
                 <button
@@ -609,7 +716,7 @@ export default function InboxClient({
                             : "rounded-bl-sm border border-white/10 bg-zinc-900 text-slate-100"
                         }`}
                       >
-                        {message.message_body}
+                        {message.message_text ?? message.message_body}
                       </div>
                     </div>
                   ))

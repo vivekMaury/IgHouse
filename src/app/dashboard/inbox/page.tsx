@@ -15,7 +15,7 @@ export default async function InboxPage() {
 
   const { data: contacts, error: contactsError } = await supabase
     .from("contacts")
-    .select("id, username, tags, last_interaction_at")
+    .select("id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at")
     .order("last_interaction_at", { ascending: false, nullsFirst: false });
 
   if (contactsError) {
@@ -42,7 +42,16 @@ export default async function InboxPage() {
 
   const initialContacts: Contact[] = (contacts ?? []).map((contact) => ({
     id: contact.id,
-    username: contact.username ?? "Unknown User",
+    sender_id: contact.sender_id ?? null,
+    sender_name: contact.sender_name ?? null,
+    sender_username: contact.sender_username ?? null,
+    sender_avatar_url: contact.sender_avatar_url ?? null,
+    username:
+      contact.sender_name ??
+      contact.sender_username ??
+      contact.username ??
+      contact.sender_id ??
+      "Unknown User",
     tags: contact.tags ?? [],
     last_interaction_at: contact.last_interaction_at,
   }));
@@ -52,7 +61,7 @@ export default async function InboxPage() {
   if (firstContact) {
     const { data: messages, error: messagesError } = await supabase
       .from("conversations")
-      .select("id, contact_id, direction, message_body, created_at")
+      .select("id, contact_id, direction, message_body, message_text, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, created_at")
       .eq("contact_id", firstContact.id)
       .order("created_at", { ascending: true });
 
@@ -71,7 +80,7 @@ export default async function InboxPage() {
     initialMessages = (messages ?? []).map((message) => ({
       ...message,
       direction: message.direction === "outbound" ? "outbound" : "inbound",
-      message_body: message.message_body ?? "",
+      message_body: message.message_text ?? message.message_body ?? "",
     }));
   }
 
