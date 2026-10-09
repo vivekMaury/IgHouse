@@ -73,7 +73,7 @@ async function resolveSenderProfile(
   const cached = cache.get(senderId);
   if (cached) return cached;
 
-  const version = process.env.META_GRAPH_API_VERSION ?? "v19.0";
+  const version = process.env.META_GRAPH_API_VERSION ?? "v23.0";
   const url = new URL(
     `https://graph.facebook.com/${version}/${encodeURIComponent(senderId)}`,
   );
@@ -117,8 +117,18 @@ function participantForId(value: unknown, participantId: string) {
 function graphErrorMessage(body: unknown, status: number) {
   if (isRecord(body) && isRecord(body.error)) {
     const message = getString(body.error.message);
+    const errorCode =
+      typeof body.error.code === "number" ? body.error.code : null;
     const code =
-      typeof body.error.code === "number" ? ` (Meta error ${body.error.code})` : "";
+      errorCode !== null ? ` (Meta error ${errorCode})` : "";
+    if (errorCode === 3) {
+      return (
+        "Meta rejected Instagram conversation access (error 3). Confirm the Meta app has " +
+        "the Messenger API for Instagram capability enabled and instagram_manage_messages " +
+        "access, then reconnect the Instagram account. " +
+        `${message ?? ""} (HTTP ${status}).`
+      );
+    }
     return `${message ?? "Meta Graph API request failed"}${code} (HTTP ${status}).`;
   }
   return `Meta Graph API returned an invalid response (HTTP ${status}).`;
@@ -203,15 +213,16 @@ async function fetchMessagePages(messages: unknown, accessToken: string) {
 }
 
 async function loadConversations(account: InstagramAccount, accessToken: string) {
-  const version = process.env.META_GRAPH_API_VERSION ?? "v19.0";
+  const version = process.env.META_GRAPH_API_VERSION ?? "v23.0";
   if (!/^v\d+\.\d+$/.test(version)) {
     throw new Error("META_GRAPH_API_VERSION must use the format vNN.N.");
   }
 
-  const conversationOwnerId = account.instagram_account_id;
+  // Instagram conversations are queried through the linked Facebook Page node.
+  const conversationOwnerId = account.instagram_page_id;
   if (!conversationOwnerId) {
     throw new Error(
-      "The connected account is missing its Instagram Business Account ID. Reconnect the account and try syncing again.",
+      "The connected account is missing its Facebook Page ID. Reconnect the account and try syncing again.",
     );
   }
   const url = new URL(
@@ -226,7 +237,7 @@ async function loadConversations(account: InstagramAccount, accessToken: string)
   try {
     return await fetchGraphPages(url, accessToken);
   } catch (error) {
-    console.error("Meta could not fetch Instagram account conversations.", {
+    console.error("Meta could not fetch Instagram Page conversations.", {
       accountId: account.id,
       error,
     });
