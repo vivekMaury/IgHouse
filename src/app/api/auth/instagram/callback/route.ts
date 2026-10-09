@@ -1,6 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { encryptPageAccessToken } from "@/lib/meta/graph-api";
+import {
+  encryptPageAccessToken,
+  subscribeInstagramMessages,
+} from "@/lib/meta/graph-api";
 import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
 import { createClient } from "@/utils/supabase/server";
 
@@ -251,7 +254,7 @@ export async function GET(request: NextRequest) {
 
     const workspaceId = await ensureUserWorkspace(supabase, user.id);
 
-    const accounts = instagramPages.map((page) => {
+    const accounts = await Promise.all(instagramPages.map(async (page) => {
       const instagramAccount = page.instagram_business_account;
       const accountName =
         nonEmptyString(instagramAccount.name) ??
@@ -263,6 +266,20 @@ export async function GET(request: NextRequest) {
         accountName;
       const accessToken =
         nonEmptyString(instagramAccount.access_token) ?? page.access_token;
+      let isWebhookSubscribed = false;
+
+      try {
+        await subscribeInstagramMessages(page.id, {
+          accessToken: page.access_token,
+          apiVersion: graphApiVersion,
+        });
+        isWebhookSubscribed = true;
+      } catch (error) {
+        console.error("Instagram OAuth could not subscribe the Page to message webhooks.", {
+          pageId: page.id,
+          error,
+        });
+      }
 
       return {
         workspace_id: workspaceId,
@@ -273,9 +290,10 @@ export async function GET(request: NextRequest) {
         profile_picture_url:
           nonEmptyString(instagramAccount.profile_picture_url) ?? null,
         access_token_encrypted: encryptPageAccessToken(accessToken),
+        is_webhook_subscribed: isWebhookSubscribed,
         is_active: true,
       };
-    });
+    }));
 
     const { error: saveError } = await supabase
       .from("ig_accounts")

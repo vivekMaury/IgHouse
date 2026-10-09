@@ -189,15 +189,15 @@ export async function sendInstagramDM(
 }
 
 export async function subscribeInstagramMessages(
-  instagramAccountId: string,
+  pageId: string,
   options: GraphApiOptions,
 ) {
   const version =
     options.apiVersion ?? process.env.META_GRAPH_API_VERSION ?? 'v23.0';
   const url = new URL(
-    `https://graph.facebook.com/${version}/${encodeURIComponent(instagramAccountId)}/subscribed_apps`,
+    `https://graph.facebook.com/${version}/${encodeURIComponent(pageId)}/subscribed_apps`,
   );
-  url.searchParams.set('subscribed_fields', 'messages,messaging_postbacks');
+  url.searchParams.set('subscribed_fields', 'messages,messaging_postbacks,feed');
 
   const response = await fetch(url, {
     method: 'POST',

@@ -1,7 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Clock, MessageSquare, Send, User, UserRound } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  Clock,
+  LoaderCircle,
+  MessageSquare,
+  Send,
+  User,
+  UserRound,
+  X,
+} from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 
 export type Contact = {
@@ -23,6 +33,8 @@ type InboxClientProps = {
   initialContacts: Contact[];
   initialMessages: Message[];
   loadError?: string;
+  accountsNeedingSubscription?: string[];
+  subscriptionStatusUnavailable?: boolean;
 };
 
 type SendMessageResponse = {
@@ -34,6 +46,8 @@ export default function InboxClient({
   initialContacts,
   initialMessages,
   loadError,
+  accountsNeedingSubscription = [],
+  subscriptionStatusUnavailable = false,
 }: InboxClientProps) {
   const [contacts, setContacts] = useState(initialContacts);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(
@@ -46,6 +60,12 @@ export default function InboxClient({
   const [humanOverride, setHumanOverride] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [webhookSetupError, setWebhookSetupError] = useState<string | null>(null);
+  const [subscriptionAccountIds, setSubscriptionAccountIds] = useState(accountsNeedingSubscription);
+  const [isSubscriptionStatusUnavailable, setIsSubscriptionStatusUnavailable] = useState(
+    subscriptionStatusUnavailable,
+  );
+  const [subscriptionDismissed, setSubscriptionDismissed] = useState(false);
+  const [isRetryingSubscription, setIsRetryingSubscription] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [supabase] = useState(createClient);
@@ -54,30 +74,42 @@ export default function InboxClient({
     selectedContactRef.current = selectedContact;
   }, [selectedContact]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    void fetch("/api/inbox/webhooks/subscribe", { method: "POST" })
-      .then(async (response) => {
-        if (response.ok) return;
+  const retrySubscription = async () => {
+    if (isRetryingSubscription) return;
+    setIsRetryingSubscription(true);
+    setWebhookSetupError(null);
+    try {
+      const accountIds =
+        subscriptionAccountIds.length > 0
+          ? subscriptionAccountIds
+          : [undefined];
+      for (const accountId of accountIds) {
+        const response = await fetch("/api/instagram/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(accountId ? { account_id: accountId } : {}),
+        });
         const result = (await response.json()) as { error?: string };
-        throw new Error(result.error ?? "Instagram live messages could not be enabled.");
-      })
-      .catch((error: unknown) => {
-        console.error("Could not ensure Instagram webhook subscription.", error);
-        if (!cancelled) {
-          setWebhookSetupError(
-            error instanceof Error
-              ? error.message
-              : "Instagram live messages could not be enabled.",
+        if (!response.ok) {
+          throw new Error(
+            result.error ?? "Instagram live messages could not be enabled.",
           );
         }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+      }
+      setSubscriptionAccountIds([]);
+      setIsSubscriptionStatusUnavailable(false);
+      setSubscriptionDismissed(true);
+    } catch (error) {
+      console.error("Could not retry Instagram webhook subscription.", error);
+      setWebhookSetupError(
+        error instanceof Error
+          ? error.message
+          : "Instagram live messages could not be enabled.",
+      );
+    } finally {
+      setIsRetryingSubscription(false);
+    }
+  };
 
   const loadMessages = useCallback(async (contactId: string) => {
     const { data, error } = await supabase
@@ -313,11 +345,46 @@ export default function InboxClient({
               {loadError}
             </p>
           )}
-          {webhookSetupError && (
-            <p className="m-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200" role="alert">
-              {webhookSetupError}
-            </p>
-          )}
+          {!subscriptionDismissed &&
+            (subscriptionAccountIds.length > 0 ||
+              isSubscriptionStatusUnavailable ||
+              webhookSetupError) && (
+              <div
+                className="m-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-200"
+                role="status"
+              >
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p>
+                      {webhookSetupError ??
+                        "Instagram message events are not enabled. You can still view existing conversations."}
+                    </p>
+                    <div className="mt-3 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void retrySubscription()}
+                        disabled={isRetryingSubscription}
+                        className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {isRetryingSubscription && (
+                          <LoaderCircle size={14} className="animate-spin" />
+                        )}
+                        Retry Subscription
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubscriptionDismissed(true)}
+                        className="inline-flex items-center gap-1 text-xs font-medium hover:underline"
+                      >
+                        <X size={14} />
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           {contacts.map((contact) => (
             <button
               type="button"

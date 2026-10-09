@@ -25,9 +25,21 @@ export default async function InboxPage() {
         initialContacts={[]}
         initialMessages={[]}
         loadError="Could not load inbox contacts. Please refresh the page."
+        subscriptionStatusUnavailable={false}
       />
     );
   }
+
+  const { data: accounts, error: accountsError } = await supabase
+    .from("ig_accounts")
+    .select("id, is_webhook_subscribed")
+    .eq("is_active", true);
+  if (accountsError) {
+    console.error("Live Inbox webhook subscription status could not be loaded.", accountsError);
+  }
+  const accountsNeedingSubscription = (accounts ?? [])
+    .filter((account) => !account.is_webhook_subscribed)
+    .map((account) => account.id);
 
   const initialContacts: Contact[] = (contacts ?? []).map((contact) => ({
     id: contact.id,
@@ -52,6 +64,8 @@ export default async function InboxPage() {
           initialContacts={initialContacts}
           initialMessages={[]}
           loadError="Could not load this conversation. Please refresh the page."
+          accountsNeedingSubscription={accountsNeedingSubscription}
+          subscriptionStatusUnavailable={Boolean(accountsError)}
         />
       );
     }
@@ -67,6 +81,8 @@ export default async function InboxPage() {
     <InboxClient
       initialContacts={initialContacts}
       initialMessages={initialMessages}
+      accountsNeedingSubscription={accountsNeedingSubscription}
+      subscriptionStatusUnavailable={Boolean(accountsError)}
     />
   );
 }
