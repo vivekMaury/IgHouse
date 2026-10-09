@@ -191,38 +191,59 @@ export async function sendInstagramDM(
 export async function subscribeInstagramMessages(
   pageId: string,
   options: GraphApiOptions,
+  instagramAccountId?: string | null,
 ) {
   const version =
     options.apiVersion ?? process.env.META_GRAPH_API_VERSION ?? 'v23.0';
-  const url = new URL(
-    `https://graph.facebook.com/${version}/${encodeURIComponent(pageId)}/subscribed_apps`,
-  );
-  url.searchParams.set('subscribed_fields', 'messages,messaging_postbacks,feed');
+  const fields = ['messages', 'messaging_postbacks', 'feed'];
+  const candidateIds =
+    instagramAccountId && instagramAccountId !== pageId
+      ? [pageId, instagramAccountId]
+      : [pageId];
+  let lastError = 'Meta did not confirm the Instagram messaging webhook subscription.';
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${options.accessToken}` },
-    cache: 'no-store',
-  });
-  const body: unknown = await response.json().catch(() => null);
-  const graphError =
-    typeof body === 'object' && body !== null && 'error' in body
-      ? (body as { error?: { message?: string } }).error
-      : undefined;
+  for (const id of candidateIds) {
+    const url = new URL(
+      `https://graph.facebook.com/${version}/${encodeURIComponent(id)}/subscribed_apps`,
+    );
+    url.searchParams.set('subscribed_fields', fields.join(','));
+    url.searchParams.set('access_token', options.accessToken);
 
-  if (
-    !response.ok ||
-    graphError ||
-    !body ||
-    typeof body !== 'object' ||
-    !('success' in body) ||
-    body.success !== true
-  ) {
-    const message =
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${options.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        subscribed_fields: fields,
+        access_token: options.accessToken,
+      }),
+      cache: 'no-store',
+    });
+    const body: unknown = await response.json().catch(() => null);
+    const graphError =
+      typeof body === 'object' && body !== null && 'error' in body
+        ? (body as { error?: { message?: string } }).error
+        : undefined;
+
+    if (
+      response.ok &&
+      !graphError &&
+      typeof body === 'object' &&
+      body !== null &&
+      'success' in body &&
+      body.success === true
+    ) {
+      return;
+    }
+
+    lastError =
       graphError?.message ??
       `Meta did not confirm the Instagram messaging webhook subscription (HTTP ${response.status}).`;
-    throw new Error(message);
   }
+
+  throw new Error(lastError);
 }
 
 export async function replyToInstagramComment(

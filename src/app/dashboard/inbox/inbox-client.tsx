@@ -66,6 +66,7 @@ export default function InboxClient({
   );
   const [subscriptionDismissed, setSubscriptionDismissed] = useState(false);
   const [isRetryingSubscription, setIsRetryingSubscription] = useState(false);
+  const [subscriptionToast, setSubscriptionToast] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [supabase] = useState(createClient);
@@ -89,23 +90,27 @@ export default function InboxClient({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(accountId ? { account_id: accountId } : {}),
         });
-        const result = (await response.json()) as { error?: string };
-        if (!response.ok) {
-          throw new Error(
-            result.error ?? "Instagram live messages could not be enabled.",
-          );
+        const result = (await response.json()) as {
+          data?: { success?: boolean };
+          error?: string;
+        };
+        if (!response.ok || result.data?.success !== true) {
+          throw new Error(result.error ?? "Meta did not confirm the webhook subscription.");
         }
       }
       setSubscriptionAccountIds([]);
       setIsSubscriptionStatusUnavailable(false);
       setSubscriptionDismissed(true);
+      setSubscriptionToast("Instagram messages enabled successfully!");
+      window.setTimeout(() => setSubscriptionToast(null), 4000);
     } catch (error) {
       console.error("Could not retry Instagram webhook subscription.", error);
-      setWebhookSetupError(
+      const message =
         error instanceof Error
           ? error.message
-          : "Instagram live messages could not be enabled.",
-      );
+          : "Instagram live messages could not be enabled.";
+      setWebhookSetupError(message);
+      window.alert(message);
     } finally {
       setIsRetryingSubscription(false);
     }
@@ -335,6 +340,15 @@ export default function InboxClient({
 
   return (
     <div className="flex h-[calc(100vh-2rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      {subscriptionToast && (
+        <div
+          className="fixed right-5 top-5 z-50 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-lg"
+          role="status"
+          aria-live="polite"
+        >
+          {subscriptionToast}
+        </div>
+      )}
       <div className="flex w-80 shrink-0 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950">
         <div className="border-b border-slate-200 bg-white p-5 text-lg font-semibold text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
           Live Inbox

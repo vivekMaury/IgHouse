@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
 
   let query = supabase
     .from("ig_accounts")
-    .select("id, instagram_page_id, access_token_encrypted")
+    .select("id, instagram_page_id, instagram_account_id, access_token_encrypted")
     .eq("is_active", true);
   if (workspaceId) query = query.eq("workspace_id", workspaceId);
   if (accountId) query = query.eq("id", accountId);
@@ -86,9 +86,11 @@ export async function POST(request: NextRequest) {
         throw new Error("A connected Instagram account is missing its Page ID or access token.");
       }
 
-      await subscribeInstagramMessages(account.instagram_page_id, {
-        accessToken: decryptPageAccessToken(account.access_token_encrypted),
-      });
+      await subscribeInstagramMessages(
+        account.instagram_page_id,
+        { accessToken: decryptPageAccessToken(account.access_token_encrypted) },
+        account.instagram_account_id,
+      );
       const { error: updateError } = await supabase
         .from("ig_accounts")
         .update({ is_webhook_subscribed: true })
@@ -99,9 +101,13 @@ export async function POST(request: NextRequest) {
       subscribed += 1;
     }
 
-    return NextResponse.json({ subscribed });
+    return NextResponse.json({ data: { success: true }, subscribed });
   } catch (error) {
     console.error("Meta Instagram messaging webhook subscription failed.", error);
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "Meta rejected the webhook subscription request.";
     for (const account of accounts.slice(subscribed)) {
       const { error: updateError } = await supabase
         .from("ig_accounts")
@@ -116,8 +122,8 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json(
       {
-        error:
-          "Meta could not enable message events for this account. Confirm the Instagram messaging permissions and the Messages webhook are enabled in the Meta app, then reconnect Instagram.",
+        data: { success: false },
+        error: errorMessage,
       },
       { status: 502 },
     );

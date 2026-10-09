@@ -272,7 +272,7 @@ export async function GET(request: NextRequest) {
         await subscribeInstagramMessages(page.id, {
           accessToken: page.access_token,
           apiVersion: graphApiVersion,
-        });
+        }, typeof instagramAccount.id === "string" ? instagramAccount.id : null);
         isWebhookSubscribed = true;
       } catch (error) {
         console.error("Instagram OAuth could not subscribe the Page to message webhooks.", {
