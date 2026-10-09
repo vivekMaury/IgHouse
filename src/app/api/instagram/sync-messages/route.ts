@@ -239,23 +239,50 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  let accountQuery = supabase
-    .from("ig_accounts")
-    .select("id, instagram_account_id, instagram_page_id, access_token_encrypted")
-    .eq("is_active", true);
-  if (accountId) accountQuery = accountQuery.eq("id", accountId);
+  let workspaceId: string;
+  let accounts: InstagramAccount[] | null;
+  try {
+    const { data: membership, error: membershipError } = await supabase
+      .from("workspace_members")
+      .select("workspace_id")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (membershipError) throw membershipError;
+    if (!membership?.workspace_id) {
+      return NextResponse.json(
+        { error: "No active workspace is associated with this user." },
+        { status: 409 },
+      );
+    }
+    workspaceId = membership.workspace_id;
 
-  const { data: accounts, error: accountError } = await accountQuery;
-  if (accountError) {
-    console.error("Could not load Instagram accounts for message sync.", accountError);
+    let accountQuery = supabase
+      .from("ig_accounts")
+      .select("id, instagram_account_id, instagram_page_id, access_token_encrypted")
+      .eq("workspace_id", workspaceId)
+      .eq("is_active", true);
+    if (accountId) accountQuery = accountQuery.eq("id", accountId);
+
+    const accountResult = await accountQuery;
+    if (accountResult.error) throw accountResult.error;
+    accounts = accountResult.data;
+  } catch (error) {
+    console.error("Could not load workspace Instagram accounts for message sync.", error);
     return NextResponse.json(
-      { error: "Could not load connected Instagram accounts." },
+      { error: "Could not load connected Instagram accounts for the active workspace." },
       { status: 500 },
     );
   }
+
   if (!accounts?.length) {
     return NextResponse.json(
-      { error: "No active connected Instagram account was found." },
+      {
+        error: accountId
+          ? "The requested Instagram account is not active in your workspace."
+          : "No active connected Instagram account was found in your workspace.",
+      },
       { status: 404 },
     );
   }
