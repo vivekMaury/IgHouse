@@ -286,9 +286,22 @@ export default function InboxClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      const result = (await response.json()) as SyncMessagesResponse;
+      const responseText = await response.text();
+      let result: SyncMessagesResponse;
+      try {
+        result = responseText
+          ? (JSON.parse(responseText) as SyncMessagesResponse)
+          : {};
+      } catch {
+        throw new Error(
+          `The sync service returned an unreadable response (HTTP ${response.status}). Please try again.`,
+        );
+      }
       if (!response.ok || result.success !== true) {
-        throw new Error(result.error ?? "Instagram messages could not be synchronized.");
+        throw new Error(
+          result.error?.trim() ||
+            `Instagram messages could not be synchronized (HTTP ${response.status}).`,
+        );
       }
 
       setContacts(await loadContacts());
@@ -298,7 +311,7 @@ export default function InboxClient({
         await loadMessages(activeContact.id);
       }
       setSubscriptionToast(
-        `Synced ${result.syncedMessages ?? 0} Instagram messages.`,
+        `Sync complete — ${result.syncedMessages ?? 0} messages updated.`,
       );
       window.setTimeout(() => setSubscriptionToast(null), 4000);
     } catch (error) {
@@ -576,9 +589,30 @@ export default function InboxClient({
       </header>
 
       {syncError && (
-        <p className="shrink-0 border-b border-red-900/60 bg-red-950/50 px-4 py-2 text-sm text-red-200" role="alert">
-          {syncError}
-        </p>
+        <div
+          className="flex shrink-0 items-start gap-3 border-b border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-100"
+          role="alert"
+          aria-live="assertive"
+        >
+          <AlertTriangle size={17} className="mt-0.5 shrink-0 text-red-300" />
+          <p className="min-w-0 flex-1 break-words">{syncError}</p>
+          <button
+            type="button"
+            onClick={() => void syncHistoricalMessages()}
+            disabled={isSyncingMessages}
+            className="shrink-0 rounded-md border border-red-300/20 px-3 py-1.5 text-xs font-semibold text-red-100 transition-colors hover:bg-red-100/10 disabled:cursor-wait disabled:opacity-60"
+          >
+            Try again
+          </button>
+          <button
+            type="button"
+            onClick={() => setSyncError(null)}
+            className="shrink-0 rounded-md px-2 py-1.5 text-xs text-red-200/80 transition-colors hover:bg-red-100/10 hover:text-white"
+            aria-label="Dismiss sync error"
+          >
+            Dismiss
+          </button>
+        </div>
       )}
 
       <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-12">

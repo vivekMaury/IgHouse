@@ -32,6 +32,16 @@ function getString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function errorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  if (isRecord(error)) {
+    const message = getString(error.message);
+    const code = getString(error.code);
+    if (message) return code ? `${message} (code ${code})` : message;
+  }
+  return fallback;
+}
+
 function extractMessageText(message: JsonRecord) {
   const text = getString(message.message) ?? getString(message.text);
   if (text) return text;
@@ -68,8 +78,11 @@ async function resolveSenderProfile(
     `https://graph.facebook.com/${version}/${encodeURIComponent(senderId)}`,
   );
   url.searchParams.set("fields", "id,name,username,profile_pic");
-  url.searchParams.set("access_token", accessToken);
-  const response = await fetch(url, { cache: "no-store" });
+  // Use the bearer header so the token is not included in request URLs.
+  const response = await fetch(url, {
+    headers: { Authorization: "Bearer " + accessToken },
+    cache: "no-store",
+  });
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok || !isRecord(body) || isRecord(body.error)) {
     throw new Error(graphErrorMessage(body, response.status));
@@ -103,9 +116,12 @@ function participantForId(value: unknown, participantId: string) {
 
 function graphErrorMessage(body: unknown, status: number) {
   if (isRecord(body) && isRecord(body.error)) {
-    return getString(body.error.message) ?? `Meta Graph API returned HTTP ${status}.`;
+    const message = getString(body.error.message);
+    const code =
+      typeof body.error.code === "number" ? ` (Meta error ${body.error.code})` : "";
+    return `${message ?? "Meta Graph API request failed"}${code} (HTTP ${status}).`;
   }
-  return `Meta Graph API returned HTTP ${status}.`;
+  return `Meta Graph API returned an invalid response (HTTP ${status}).`;
 }
 
 async function fetchGraphPages(initialUrl: URL, accessToken: string) {
@@ -117,8 +133,11 @@ async function fetchGraphPages(initialUrl: URL, accessToken: string) {
     if (nextUrl.hostname !== "graph.facebook.com" || nextUrl.protocol !== "https:") {
       throw new Error("Meta returned an invalid pagination URL.");
     }
-    nextUrl.searchParams.set("access_token", accessToken);
-    const response = await fetch(nextUrl, { cache: "no-store" });
+    nextUrl.searchParams.delete("access_token");
+    const response = await fetch(nextUrl, {
+      headers: { Authorization: "Bearer " + accessToken },
+      cache: "no-store",
+    });
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok || !isRecord(body)) {
       throw new Error(graphErrorMessage(body, response.status));
@@ -158,8 +177,11 @@ async function fetchMessagePages(messages: unknown, accessToken: string) {
     if (nextUrl.hostname !== "graph.facebook.com" || nextUrl.protocol !== "https:") {
       throw new Error("Meta returned an invalid message pagination URL.");
     }
-    nextUrl.searchParams.set("access_token", accessToken);
-    const response = await fetch(nextUrl, { cache: "no-store" });
+    nextUrl.searchParams.delete("access_token");
+    const response = await fetch(nextUrl, {
+      headers: { Authorization: "Bearer " + accessToken },
+      cache: "no-store",
+    });
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok || !isRecord(body) || isRecord(body.error)) {
       throw new Error(graphErrorMessage(body, response.status));
@@ -186,18 +208,25 @@ async function loadConversations(account: InstagramAccount, accessToken: string)
     throw new Error("META_GRAPH_API_VERSION must use the format vNN.N.");
   }
 
-  const url = new URL(`https://graph.facebook.com/${version}/me/conversations`);
+  const conversationOwnerId = account.instagram_account_id;
+  if (!conversationOwnerId) {
+    throw new Error(
+      "The connected account is missing its Instagram Business Account ID. Reconnect the account and try syncing again.",
+    );
+  }
+  const url = new URL(
+    `https://graph.facebook.com/${version}/${encodeURIComponent(conversationOwnerId)}/conversations`,
+  );
   url.searchParams.set("platform", "instagram");
   url.searchParams.set(
     "fields",
-    "id,participants,messages.limit(100){id,message,created_time,from,to}",
+    "id,participants,messages.limit(100){id,message,created_time,from,to,attachments}",
   );
-  url.searchParams.set("access_token", accessToken);
 
   try {
     return await fetchGraphPages(url, accessToken);
   } catch (error) {
-    console.error("Meta could not fetch Instagram conversations via /me.", {
+    console.error("Meta could not fetch Instagram account conversations.", {
       accountId: account.id,
       error,
     });
@@ -415,12 +444,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Instagram historical message sync failed.", error);
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Instagram messages could not be synchronized.",
-      },
+      { error: errorMessage(error, "Instagram messages could not be synchronized.") },
       { status: 502 },
     );
   }
