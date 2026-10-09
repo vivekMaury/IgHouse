@@ -37,6 +37,9 @@ function errorMessage(error: unknown, fallback: string) {
   if (isRecord(error)) {
     const message = getString(error.message);
     const code = getString(error.code);
+    if (code === "PGRST204" || code === "42703") {
+      return "The Supabase database is missing Live Inbox columns. Apply the latest Supabase migration, then retry syncing.";
+    }
     if (message) return code ? `${message} (code ${code})` : message;
   }
   return fallback;
