@@ -10,7 +10,6 @@ import {
   Send,
   User,
   UserRound,
-  X,
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 
@@ -34,7 +33,6 @@ type InboxClientProps = {
   initialMessages: Message[];
   loadError?: string;
   accountsNeedingSubscription?: string[];
-  subscriptionStatusUnavailable?: boolean;
 };
 
 type SendMessageResponse = {
@@ -47,7 +45,6 @@ export default function InboxClient({
   initialMessages,
   loadError,
   accountsNeedingSubscription = [],
-  subscriptionStatusUnavailable = false,
 }: InboxClientProps) {
   const [contacts, setContacts] = useState(initialContacts);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(
@@ -61,10 +58,7 @@ export default function InboxClient({
   const [sendError, setSendError] = useState<string | null>(null);
   const [webhookSetupError, setWebhookSetupError] = useState<string | null>(null);
   const [subscriptionAccountIds, setSubscriptionAccountIds] = useState(accountsNeedingSubscription);
-  const [isSubscriptionStatusUnavailable, setIsSubscriptionStatusUnavailable] = useState(
-    subscriptionStatusUnavailable,
-  );
-  const [subscriptionDismissed, setSubscriptionDismissed] = useState(false);
+  const [subscriptionDismissed, setSubscriptionDismissed] = useState(true);
   const [isRetryingSubscription, setIsRetryingSubscription] = useState(false);
   const [subscriptionToast, setSubscriptionToast] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -74,6 +68,26 @@ export default function InboxClient({
   useEffect(() => {
     selectedContactRef.current = selectedContact;
   }, [selectedContact]);
+
+  useEffect(() => {
+    try {
+      setSubscriptionDismissed(
+        window.localStorage.getItem("inbox_banner_dismissed") === "true",
+      );
+    } catch (error) {
+      console.error("Could not read the Live Inbox banner preference.", error);
+      setSubscriptionDismissed(false);
+    }
+  }, []);
+
+  const dismissSubscriptionBanner = () => {
+    setSubscriptionDismissed(true);
+    try {
+      window.localStorage.setItem("inbox_banner_dismissed", "true");
+    } catch (error) {
+      console.error("Could not save the Live Inbox banner preference.", error);
+    }
+  };
 
   const retrySubscription = async () => {
     if (isRetryingSubscription) return;
@@ -99,7 +113,6 @@ export default function InboxClient({
         }
       }
       setSubscriptionAccountIds([]);
-      setIsSubscriptionStatusUnavailable(false);
       setSubscriptionDismissed(true);
       setSubscriptionToast("Instagram messages enabled successfully!");
       window.setTimeout(() => setSubscriptionToast(null), 4000);
@@ -360,9 +373,7 @@ export default function InboxClient({
             </p>
           )}
           {!subscriptionDismissed &&
-            (subscriptionAccountIds.length > 0 ||
-              isSubscriptionStatusUnavailable ||
-              webhookSetupError) && (
+            subscriptionAccountIds.length > 0 && (
               <div
                 className="m-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-200"
                 role="status"
@@ -388,10 +399,9 @@ export default function InboxClient({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSubscriptionDismissed(true)}
+                        onClick={dismissSubscriptionBanner}
                         className="inline-flex items-center gap-1 text-xs font-medium hover:underline"
                       >
-                        <X size={14} />
                         Dismiss
                       </button>
                     </div>
