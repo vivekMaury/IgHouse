@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   encryptPageAccessToken,
   subscribeInstagramMessages,
-} from "@/lib/meta/graph-api";
+} from "@/lib/instagram/api";
 import { ensureUserWorkspace } from "@/lib/workspaces/ensure-user-workspace";
 import { createClient } from "@/utils/supabase/server";
 

@@ -4,7 +4,7 @@ import {
   encryptPageAccessToken,
   refreshLongLivedAccessToken,
   sendInstagramDM,
-} from "@/lib/meta/graph-api";
+} from "@/lib/instagram/api";
 import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";

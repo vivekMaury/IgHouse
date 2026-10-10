@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
+import type { ConnectedAccount, Conversation, Message } from "@/types/inbox";
 import { createClient } from "@/utils/supabase/server";
-import InboxClient, { type Contact, type Message } from "./inbox-client";
+import LiveInboxClient from "@/components/inbox/LiveInboxClient";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export default async function InboxPage() {
   if (authError || !user) redirect("/login");
 
   let workspaceId: string | null = null;
-  let initialContacts: Contact[] = [];
+  let initialContacts: Conversation[] = [];
 
   try {
     const { data: membership, error: membershipError } = await supabase
@@ -52,7 +53,7 @@ export default async function InboxPage() {
     console.error("Live Inbox contacts could not be loaded; rendering an empty list.", error);
   }
 
-  let accounts: Array<{ id: string; is_webhook_subscribed: boolean | null }> = [];
+  let accounts: ConnectedAccount[] = [];
   try {
     const { data, error } = await supabase
       .from("ig_accounts")
@@ -90,7 +91,7 @@ export default async function InboxPage() {
   }
 
   return (
-    <InboxClient
+    <LiveInboxClient
       initialContacts={initialContacts}
       initialMessages={initialMessages}
       accountsNeedingSubscription={accountsNeedingSubscription}

@@ -6,11 +6,11 @@ import {
   replyToInstagramComment,
   sendInstagramDM,
   sendPrivateDMFromComment,
-} from '@/lib/meta/graph-api';
+} from '@/lib/instagram/api';
 import type {
   GraphApiOptions,
   InstagramSenderProfile,
-} from '@/lib/meta/graph-api';
+} from '@/lib/instagram/api';
 import { validateExternalHttpsUrl } from '@/lib/integrations/urls';
 import { getRedisClient } from '@/lib/queue/upstash';
 import { createAdminClient } from '@/lib/supabase/admin';

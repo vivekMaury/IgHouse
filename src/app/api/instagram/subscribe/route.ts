@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   decryptPageAccessToken,
   subscribeInstagramMessages,
-} from "@/lib/meta/graph-api";
+} from "@/lib/instagram/api";
 import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";

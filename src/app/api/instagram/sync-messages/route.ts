@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   decryptPageAccessToken,
   getInstagramSenderProfile,
-} from "@/lib/meta/graph-api";
+} from "@/lib/instagram/api";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 
