@@ -152,15 +152,6 @@ export async function GET(request: NextRequest) {
       cache: "no-store",
     });
     const pagesBody = (await pagesResponse.json()) as PageListResponse;
-    const pagesForLog = Array.isArray(pagesBody.data)
-      ? {
-          ...pagesBody,
-          data: (pagesBody.data as PageAccount[]).map(
-            ({ access_token: _accessToken, ...page }) => page,
-          ),
-        }
-      : pagesBody;
-    console.log("Instagram OAuth /me/accounts raw response:", JSON.stringify(pagesForLog));
     if (!pagesResponse.ok || !Array.isArray(pagesBody.data)) {
       throw new Error(pagesBody.error?.message ?? "Meta could not return your Pages.");
     }
@@ -216,10 +207,6 @@ export async function GET(request: NextRequest) {
       });
       const instagramBody =
         (await instagramResponse.json()) as PageInstagramResponse;
-      console.log(
-        `Instagram OAuth Page ${page.id} instagram_business_account raw response:`,
-        JSON.stringify(instagramBody),
-      );
       if (!instagramResponse.ok) {
         throw new Error(
           instagramBody.error?.message ??

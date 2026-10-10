@@ -27,14 +27,14 @@ function nonEmptyString(value: unknown) {
 export async function getInstagramSenderProfile(
   senderId: string,
   accessToken: string,
+  apiVersion = process.env.META_GRAPH_API_VERSION ?? 'v23.0',
 ): Promise<InstagramSenderProfile> {
-  const version = process.env.META_GRAPH_API_VERSION ?? 'v23.0';
-  if (!/^v\d+\.\d+$/.test(version)) {
+  if (!/^v\d+\.\d+$/.test(apiVersion)) {
     throw new Error('META_GRAPH_API_VERSION must use the format vNN.N.');
   }
 
   const url = new URL(
-    `https://graph.facebook.com/${version}/${encodeURIComponent(senderId)}`,
+    `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(senderId)}`,
   );
   url.searchParams.set('fields', 'id,name,username,profile_pic');
   const response = await fetch(url, {

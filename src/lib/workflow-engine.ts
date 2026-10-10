@@ -739,6 +739,7 @@ async function persistIncomingInstagramEvents(
           direction: 'inbound',
           message_body: messageText,
           message_text: messageText,
+          last_message: messageText,
           sender_id: event.senderId,
           sender_name: senderName,
           sender_username: senderUsername,

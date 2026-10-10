@@ -11,7 +11,6 @@ type LiveInboxClientProps = {
   initialContacts: Conversation[];
   initialMessages: Message[];
   loadError?: string;
-  accountsNeedingSubscription?: string[];
   workspaceId?: string | null;
 };
 
@@ -31,7 +30,6 @@ export default function LiveInboxClient({
   initialContacts,
   initialMessages,
   loadError,
-  accountsNeedingSubscription = [],
   workspaceId = null,
 }: LiveInboxClientProps) {
   const [contacts, setContacts] = useState(initialContacts);
@@ -42,11 +40,7 @@ export default function LiveInboxClient({
   const [replyText, setReplyText] = useState("");
   const [humanOverride, setHumanOverride] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [webhookSetupError, setWebhookSetupError] = useState<string | null>(null);
-  const [subscriptionAccountIds, setSubscriptionAccountIds] = useState(accountsNeedingSubscription);
-  const [subscriptionDismissed, setSubscriptionDismissed] = useState(true);
-  const [isRetryingSubscription, setIsRetryingSubscription] = useState(false);
-  const [subscriptionToast, setSubscriptionToast] = useState<string | null>(null);
+  const [statusToast, setStatusToast] = useState<string | null>(null);
   const [isSyncingMessages, setIsSyncingMessages] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -67,70 +61,6 @@ export default function LiveInboxClient({
     media.addEventListener("change", selectInitialContact);
     return () => media.removeEventListener("change", selectInitialContact);
   }, [initialContacts]);
-
-  useEffect(() => {
-    try {
-      const dismissed = window.localStorage.getItem("inbox_banner_dismissed");
-      // Treat is_webhook_subscribed as true by default so warning never triggers unless explicitly false
-      if (dismissed === null) {
-        setSubscriptionDismissed(true);
-      } else {
-        setSubscriptionDismissed(dismissed === "true");
-      }
-    } catch (error) {
-      console.error("Could not read the Live Inbox banner preference.", error);
-      setSubscriptionDismissed(true);
-    }
-  }, []);
-
-  const dismissSubscriptionBanner = () => {
-    setSubscriptionDismissed(true);
-    try {
-      window.localStorage.setItem("inbox_banner_dismissed", "true");
-    } catch (error) {
-      console.error("Could not save the Live Inbox banner preference.", error);
-    }
-  };
-
-  const retrySubscription = async () => {
-    if (isRetryingSubscription) return;
-    setIsRetryingSubscription(true);
-    setWebhookSetupError(null);
-    try {
-      const accountIds =
-        subscriptionAccountIds.length > 0
-          ? subscriptionAccountIds
-          : [undefined];
-      for (const accountId of accountIds) {
-        const response = await fetch("/api/instagram/subscribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(accountId ? { account_id: accountId } : {}),
-        });
-        const result = (await response.json()) as {
-          data?: { success?: boolean };
-          error?: string;
-        };
-        if (!response.ok || result.data?.success !== true) {
-          throw new Error(result.error ?? "Meta did not confirm the webhook subscription.");
-        }
-      }
-      setSubscriptionAccountIds([]);
-      setSubscriptionDismissed(true);
-      setSubscriptionToast("Instagram messages enabled successfully!");
-      window.setTimeout(() => setSubscriptionToast(null), 4000);
-    } catch (error) {
-      console.error("Could not retry Instagram webhook subscription.", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Instagram live messages could not be enabled.";
-      setWebhookSetupError(message);
-      window.alert(message);
-    } finally {
-      setIsRetryingSubscription(false);
-    }
-  };
 
   const loadMessages = useCallback(async (contactId: string) => {
     try {
@@ -186,9 +116,9 @@ export default function LiveInboxClient({
           contactsById.set(contact.id, {
             id: contact.id,
             username:
-              contact.sender_name ??
               contact.sender_username ??
               contact.username ??
+              contact.sender_name ??
               contact.sender_id ??
               "Unknown User",
             sender_id: contact.sender_id,
@@ -217,9 +147,9 @@ export default function LiveInboxClient({
       return (data ?? []).map((contact) => ({
         id: contact.id,
         username:
-          contact.sender_name ??
           contact.sender_username ??
           contact.username ??
+          contact.sender_name ??
           contact.sender_id ??
           "Unknown User",
         sender_id: contact.sender_id,
@@ -231,15 +161,20 @@ export default function LiveInboxClient({
       }));
     } catch (error) {
       console.error("Live Inbox contacts could not be refreshed.", error);
-      return [];
+      return initialContacts;
     }
-  }, [supabase, workspaceId]);
+  }, [initialContacts, supabase, workspaceId]);
 
   useEffect(() => {
     if (initialContacts.length === 0) {
-      void loadContacts().then(setContacts);
+      void loadContacts()
+        .then(setContacts)
+        .catch((error) => {
+          console.error("Live Inbox contacts could not be refreshed.", error);
+          setContacts(initialContacts);
+        });
     }
-  }, [initialContacts.length, loadContacts]);
+  }, [initialContacts, loadContacts]);
 
   useEffect(() => {
     if (selectedContact) void loadMessages(selectedContact.id);
@@ -288,10 +223,10 @@ export default function LiveInboxClient({
         }
         await loadMessages(activeContact.id);
       }
-      setSubscriptionToast(
+      setStatusToast(
         `Sync complete — ${result.syncedMessages ?? 0} messages updated.`,
       );
-      window.setTimeout(() => setSubscriptionToast(null), 4000);
+      window.setTimeout(() => setStatusToast(null), 4000);
     } catch (error) {
       console.error("Could not sync Instagram historical messages.", error);
       setSyncError(
@@ -315,66 +250,71 @@ export default function LiveInboxClient({
           table: "conversations",
         },
         async (payload) => {
-          const incoming = payload.new as Message;
-          const normalizedIncoming = {
-            ...incoming,
-            message_body: incoming.message_text ?? incoming.message_body ?? "",
-          };
-          setContactPreviews((current) => ({
-            ...current,
-            [incoming.contact_id]: normalizedIncoming.message_body || "New Instagram message",
-          }));
-          setContacts((current) =>
-            current
-              .map((contact) =>
-                contact.id === incoming.contact_id
-                  ? { ...contact, last_interaction_at: incoming.created_at }
-                  : contact,
-              )
-              .sort((left, right) =>
-                (right.last_interaction_at ?? "").localeCompare(
-                  left.last_interaction_at ?? "",
-                ),
-              ),
-          );
+          try {
+            const incoming = payload.new as Message;
+            if (!incoming.id || !incoming.contact_id) return;
 
-          if (selectedContactRef.current?.id === incoming.contact_id) {
-            setMessages((current) =>
-              current.some((message) => message.id === incoming.id)
-                ? current
-                : [...current, normalizedIncoming],
-            );
-          }
-
-          const { data: refreshedContact, error: contactError } = await supabase
-            .from("contacts")
-            .select("id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at")
-            .eq("id", incoming.contact_id)
-            .maybeSingle();
-          if (contactError) {
-            console.error("Could not refresh contact for a new inbox message.", contactError);
-            return;
-          }
-          if (refreshedContact) {
-            const contact: Conversation = {
-              id: refreshedContact.id,
-              username:
-                refreshedContact.sender_name ??
-                refreshedContact.sender_username ??
-                refreshedContact.username ??
-                refreshedContact.sender_id ??
-                "Unknown User",
-              sender_id: refreshedContact.sender_id,
-              sender_name: refreshedContact.sender_name,
-              sender_username: refreshedContact.sender_username,
-              sender_avatar_url: refreshedContact.sender_avatar_url,
-              tags: refreshedContact.tags ?? [],
-              last_interaction_at: refreshedContact.last_interaction_at,
+            const normalizedIncoming = {
+              ...incoming,
+              message_body: incoming.message_text ?? incoming.message_body ?? "",
             };
-            setContacts((current) => [
-              contact,
-              ...current.filter((item) => item.id !== contact.id),
-            ]);
+            setContactPreviews((current) => ({
+              ...current,
+              [incoming.contact_id]:
+                normalizedIncoming.message_body || "New Instagram message",
+            }));
+            setContacts((current) =>
+              current
+                .map((contact) =>
+                  contact.id === incoming.contact_id
+                    ? { ...contact, last_interaction_at: incoming.created_at }
+                    : contact,
+                )
+                .sort((left, right) =>
+                  (right.last_interaction_at ?? "").localeCompare(
+                    left.last_interaction_at ?? "",
+                  ),
+                ),
+            );
+
+            if (selectedContactRef.current?.id === incoming.contact_id) {
+              setMessages((current) =>
+                current.some((message) => message.id === incoming.id)
+                  ? current
+                  : [...current, normalizedIncoming],
+              );
+            }
+
+            const { data: refreshedContact, error: contactError } =
+              await supabase
+                .from("contacts")
+                .select("id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at")
+                .eq("id", incoming.contact_id)
+                .maybeSingle();
+            if (contactError) throw contactError;
+            if (refreshedContact) {
+              const contact: Conversation = {
+                id: refreshedContact.id,
+                username:
+                  refreshedContact.sender_username ??
+                  refreshedContact.username ??
+                  refreshedContact.sender_name ??
+                  refreshedContact.sender_id ??
+                  "Unknown User",
+                sender_id: refreshedContact.sender_id,
+                sender_name: refreshedContact.sender_name,
+                sender_username: refreshedContact.sender_username,
+                sender_avatar_url: refreshedContact.sender_avatar_url,
+                tags: refreshedContact.tags ?? [],
+                last_interaction_at: refreshedContact.last_interaction_at,
+              };
+              setContacts((current) => [
+                contact,
+                ...current.filter((item) => item.id !== contact.id),
+              ]);
+            }
+          } catch (error) {
+            console.error("Could not process a new Live Inbox message.", error);
           }
         },
       )
@@ -410,9 +350,9 @@ export default function LiveInboxClient({
               const newContact: Conversation = {
                 id: updatedId,
                 username:
-                  updated.sender_name ??
                   updated.sender_username ??
                   updated.username ??
+                  updated.sender_name ??
                   updated.sender_id ??
                   "Unknown User",
                 sender_id: updated.sender_id,
@@ -430,9 +370,9 @@ export default function LiveInboxClient({
                   ? {
                       ...contact,
                       username:
-                        updated.sender_name ??
                         updated.sender_username ??
                         updated.username ??
+                        updated.sender_name ??
                         updated.sender_id ??
                         contact.username,
                       sender_id: updated.sender_id ?? contact.sender_id,
@@ -459,9 +399,9 @@ export default function LiveInboxClient({
               ? {
                   ...current,
                   username:
-                    updated.sender_name ??
                     updated.sender_username ??
                     updated.username ??
+                    updated.sender_name ??
                     updated.sender_id ??
                     current.username,
                   sender_id: updated.sender_id ?? current.sender_id,
@@ -531,13 +471,13 @@ export default function LiveInboxClient({
 
   return (
     <div className="flex h-[calc(100dvh-2rem)] min-h-[28rem] w-full min-w-0 flex-col overflow-x-hidden overflow-y-hidden rounded-xl border border-white/10 bg-[#0a0a0c] text-slate-100 shadow-xl">
-      {subscriptionToast && (
+      {statusToast && (
         <div
           className="fixed right-5 top-5 z-50 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-lg"
           role="status"
           aria-live="polite"
         >
-          {subscriptionToast}
+          {statusToast}
         </div>
       )}
 
@@ -595,11 +535,6 @@ export default function LiveInboxClient({
           selectedConversation={selectedContact}
           previews={contactPreviews}
           loadError={loadError}
-          showSubscriptionWarning={
-            !subscriptionDismissed && subscriptionAccountIds.length > 0
-          }
-          subscriptionError={webhookSetupError}
-          isRetryingSubscription={isRetryingSubscription}
           onSelect={(contact) => {
             setSelectedContact(contact);
             setMessages([]);
@@ -610,8 +545,6 @@ export default function LiveInboxClient({
             });
             setSendError(null);
           }}
-          onRetrySubscription={() => void retrySubscription()}
-          onDismissSubscriptionWarning={dismissSubscriptionBanner}
         />
         <ChatView
           conversation={selectedContact}

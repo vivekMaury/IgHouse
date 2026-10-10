@@ -116,28 +116,19 @@ export async function POST(request: Request) {
   }
 
   const eventTypes = getEventTypes(payload);
-  console.log('Instagram webhook payload event:', {
-    object: typeof payload.object === 'string' ? payload.object : 'unknown',
-    eventTypes,
-  });
 
   let queueStatus: 'processed' | 'queued' | 'failed' = 'processed';
   const downstreamErrors: string[] = [];
   try {
-    const result = await evaluateWorkflow(payload);
-    console.log('Instagram workflow evaluation completed.', {
-      events: result.events,
-      workflows: result.workflows,
-    });
+    await evaluateWorkflow(payload);
   } catch (error) {
     const message = getErrorMessage(error);
     downstreamErrors.push(`Direct workflow evaluation failed: ${message}`);
     console.error('Instagram webhook workflow evaluation failed.', error);
 
     try {
-      const eventId = await enqueueWebhook(payload);
+      await enqueueWebhook(payload);
       queueStatus = 'queued';
-      console.log('Instagram webhook queued for retry:', eventId);
     } catch (queueError) {
       queueStatus = 'failed';
       const queueMessage = getErrorMessage(queueError);

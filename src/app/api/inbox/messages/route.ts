@@ -113,6 +113,7 @@ export async function POST(request: NextRequest) {
         direction: "outbound",
         message_body: messageText,
         message_text: messageText,
+        last_message: messageText,
         sender_id: account.instagram_account_id,
         is_from_user: false,
         external_event_id: externalMessageId,

@@ -22,8 +22,3 @@ export interface Message {
   is_from_user?: boolean | null;
   created_at: string;
 }
-
-export interface ConnectedAccount {
-  id: string;
-  is_webhook_subscribed: boolean | null;
-}

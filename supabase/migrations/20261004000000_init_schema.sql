@@ -4,7 +4,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Table: workspaces
-CREATE TABLE workspaces (
+CREATE TABLE IF NOT EXISTS workspaces (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     stripe_customer_id TEXT,
@@ -13,7 +13,7 @@ CREATE TABLE workspaces (
 );
 
 -- Table: workspace_members
-CREATE TABLE workspace_members (
+CREATE TABLE IF NOT EXISTS workspace_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -23,7 +23,7 @@ CREATE TABLE workspace_members (
 );
 
 -- Table: ig_accounts
-CREATE TABLE ig_accounts (
+CREATE TABLE IF NOT EXISTS ig_accounts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
     instagram_page_id TEXT NOT NULL UNIQUE,
@@ -34,7 +34,7 @@ CREATE TABLE ig_accounts (
 );
 
 -- Table: contacts
-CREATE TABLE contacts (
+CREATE TABLE IF NOT EXISTS contacts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     ig_account_id UUID REFERENCES ig_accounts(id) ON DELETE CASCADE,
     ig_scoped_user_id TEXT NOT NULL,
@@ -48,7 +48,7 @@ CREATE TABLE contacts (
 );
 
 -- Table: flows
-CREATE TABLE flows (
+CREATE TABLE IF NOT EXISTS flows (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     ig_account_id UUID REFERENCES ig_accounts(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
@@ -60,7 +60,7 @@ CREATE TABLE flows (
 );
 
 -- Table: conversations
-CREATE TABLE conversations (
+CREATE TABLE IF NOT EXISTS conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
     direction TEXT CHECK (direction IN ('inbound', 'outbound')),
@@ -90,18 +90,22 @@ ALTER TABLE flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 
 -- Policies (View policies added for brevity - expand for INSERT/UPDATE/DELETE as needed)
+DROP POLICY IF EXISTS "Users can view workspaces they belong to" ON workspaces;
 CREATE POLICY "Users can view workspaces they belong to" 
 ON workspaces FOR SELECT 
 USING (is_workspace_member(id));
 
+DROP POLICY IF EXISTS "Users can view workspace members of their workspaces" ON workspace_members;
 CREATE POLICY "Users can view workspace members of their workspaces" 
 ON workspace_members FOR SELECT 
 USING (is_workspace_member(workspace_id));
 
+DROP POLICY IF EXISTS "Users can view ig_accounts of their workspaces" ON ig_accounts;
 CREATE POLICY "Users can view ig_accounts of their workspaces" 
 ON ig_accounts FOR SELECT 
 USING (is_workspace_member(workspace_id));
 
+DROP POLICY IF EXISTS "Users can view contacts of their workspaces" ON contacts;
 CREATE POLICY "Users can view contacts of their workspaces" 
 ON contacts FOR SELECT 
 USING (
@@ -112,6 +116,7 @@ USING (
     )
 );
 
+DROP POLICY IF EXISTS "Users can view flows of their workspaces" ON flows;
 CREATE POLICY "Users can view flows of their workspaces" 
 ON flows FOR SELECT 
 USING (
@@ -122,6 +127,7 @@ USING (
     )
 );
 
+DROP POLICY IF EXISTS "Users can view conversations of their workspaces" ON conversations;
 CREATE POLICY "Users can view conversations of their workspaces" 
 ON conversations FOR SELECT 
 USING (

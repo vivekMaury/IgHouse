@@ -9,6 +9,8 @@ import { createClient } from "@/utils/supabase/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const graphApiVersion = "v19.0";
+
 type JsonRecord = Record<string, unknown>;
 
 type InstagramAccount = {
@@ -70,7 +72,11 @@ async function resolveSenderProfile(
   const cached = cache.get(senderId);
   if (cached) return cached;
 
-  const profile = await getInstagramSenderProfile(senderId, accessToken);
+  const profile = await getInstagramSenderProfile(
+    senderId,
+    accessToken,
+    graphApiVersion,
+  );
   cache.set(senderId, profile);
   return profile;
 }
@@ -190,11 +196,6 @@ async function fetchMessagePages(messages: unknown, accessToken: string) {
 }
 
 async function loadConversations(account: InstagramAccount, accessToken: string) {
-  const version = process.env.META_GRAPH_API_VERSION ?? "v23.0";
-  if (!/^v\d+\.\d+$/.test(version)) {
-    throw new Error("META_GRAPH_API_VERSION must use the format vNN.N.");
-  }
-
   // Instagram conversations are queried through the linked Facebook Page node.
   const conversationOwnerId = account.instagram_page_id;
   if (!conversationOwnerId) {
@@ -203,7 +204,7 @@ async function loadConversations(account: InstagramAccount, accessToken: string)
     );
   }
   const url = new URL(
-    `https://graph.facebook.com/${version}/${encodeURIComponent(conversationOwnerId)}/conversations`,
+    `https://graph.facebook.com/${graphApiVersion}/${encodeURIComponent(conversationOwnerId)}/conversations`,
   );
   url.searchParams.set("platform", "instagram");
   url.searchParams.set(
@@ -325,10 +326,16 @@ export async function POST(request: NextRequest) {
       );
 
       for (const conversation of conversations) {
-        const conversationMessages = await fetchMessagePages(
-          conversation.messages,
-          accessToken,
-        );
+        const conversationMessages = (
+          await fetchMessagePages(conversation.messages, accessToken)
+        ).sort((left, right) => {
+          const leftTime = Date.parse(getString(left.created_time) ?? "");
+          const rightTime = Date.parse(getString(right.created_time) ?? "");
+          return (
+            (Number.isNaN(leftTime) ? 0 : leftTime) -
+            (Number.isNaN(rightTime) ? 0 : rightTime)
+          );
+        });
         let conversationHasMessages = false;
 
         for (const message of conversationMessages) {
@@ -407,6 +414,8 @@ export async function POST(request: NextRequest) {
                 sender_username: senderUsername,
                 sender_avatar_url: profile.avatarUrl,
                 is_from_user: direction === "inbound",
+                instagram_conversation_id: getString(conversation.id),
+                last_message: messageText,
                 external_event_id: externalId,
                 created_at: createdAt ?? new Date().toISOString(),
                 metadata: {

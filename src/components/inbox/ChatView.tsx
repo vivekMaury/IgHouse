@@ -70,12 +70,20 @@ export default function ChatView({
               </div>
               <div className="hidden min-w-0 sm:block">
                 <div className="truncate font-semibold text-white">
-                  {conversation.sender_name ||
-                    conversation.sender_username ||
-                    conversation.username ||
-                    conversation.sender_id ||
-                    "Instagram User"}
+                  {conversation.sender_username
+                    ? `@${conversation.sender_username.replace(/^@/, "")}`
+                    : conversation.username ||
+                      conversation.sender_name ||
+                      conversation.sender_id ||
+                      "Instagram User"}
                 </div>
+                {conversation.sender_name &&
+                  conversation.sender_username &&
+                  conversation.sender_name !== conversation.sender_username && (
+                    <div className="truncate text-xs text-slate-400">
+                      {conversation.sender_name}
+                    </div>
+                  )}
                 <div className="mt-1 flex gap-1">
                   {conversation.tags?.map((tag) => (
                     <span
@@ -88,11 +96,12 @@ export default function ChatView({
                 </div>
               </div>
               <div className="truncate font-semibold text-white sm:hidden">
-                {conversation.sender_name ||
-                  conversation.sender_username ||
-                  conversation.username ||
-                  conversation.sender_id ||
-                  "Instagram User"}
+                {conversation.sender_username
+                  ? `@${conversation.sender_username.replace(/^@/, "")}`
+                  : conversation.username ||
+                    conversation.sender_name ||
+                    conversation.sender_id ||
+                    "Instagram User"}
               </div>
             </div>
             <button

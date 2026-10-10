@@ -105,8 +105,7 @@ export default function FlowCanvasPage({ params }: { params: { id: string } }) {
       const flowData = reactFlowInstance.toObject();
 
       if (params.id === 'new') {
-        // Here you would typically insert a new flow
-        console.log("Saving new flow", flowData);
+        throw new Error("Create a flow from the dashboard before saving its canvas.");
       } else {
         const { error } = await supabase
           .from('flows')

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import type { ConnectedAccount, Conversation, Message } from "@/types/inbox";
+import type { Conversation, Message } from "@/types/inbox";
 import { createClient } from "@/utils/supabase/server";
 import LiveInboxClient from "@/components/inbox/LiveInboxClient";
 
@@ -41,9 +41,9 @@ export default async function InboxPage() {
       sender_username: contact.sender_username ?? null,
       sender_avatar_url: contact.sender_avatar_url ?? null,
       username:
-        contact.sender_name ??
         contact.sender_username ??
         contact.username ??
+        contact.sender_name ??
         contact.sender_id ??
         "Unknown User",
       tags: contact.tags ?? [],
@@ -52,21 +52,6 @@ export default async function InboxPage() {
   } catch (error) {
     console.error("Live Inbox contacts could not be loaded; rendering an empty list.", error);
   }
-
-  let accounts: ConnectedAccount[] = [];
-  try {
-    const { data, error } = await supabase
-      .from("ig_accounts")
-      .select("id, is_webhook_subscribed")
-      .eq("is_active", true);
-    if (error) throw error;
-    accounts = data ?? [];
-  } catch (error) {
-    console.error("Live Inbox webhook subscription status could not be loaded.", error);
-  }
-  const accountsNeedingSubscription = (accounts ?? [])
-    .filter((account) => !(account.is_webhook_subscribed ?? true))
-    .map((account) => account.id);
 
   const firstContact = initialContacts[0];
   let initialMessages: Message[] = [];
@@ -94,7 +79,6 @@ export default async function InboxPage() {
     <LiveInboxClient
       initialContacts={initialContacts}
       initialMessages={initialMessages}
-      accountsNeedingSubscription={accountsNeedingSubscription}
       workspaceId={workspaceId}
     />
   );
