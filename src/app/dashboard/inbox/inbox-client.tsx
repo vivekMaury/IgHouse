@@ -104,12 +104,16 @@ export default function InboxClient({
 
   useEffect(() => {
     try {
-      setSubscriptionDismissed(
-        window.localStorage.getItem("inbox_banner_dismissed") === "true",
-      );
+      const dismissed = window.localStorage.getItem("inbox_banner_dismissed");
+      // Treat is_webhook_subscribed as true by default so warning never triggers unless explicitly false
+      if (dismissed === null) {
+        setSubscriptionDismissed(true);
+      } else {
+        setSubscriptionDismissed(dismissed === "true");
+      }
     } catch (error) {
       console.error("Could not read the Live Inbox banner preference.", error);
-      setSubscriptionDismissed(false);
+      setSubscriptionDismissed(true);
     }
   }, []);
 
