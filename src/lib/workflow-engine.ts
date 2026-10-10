@@ -1,12 +1,16 @@
 import {
   decryptPageAccessToken,
   encryptPageAccessToken,
+  getInstagramSenderProfile,
   refreshLongLivedAccessToken,
   replyToInstagramComment,
   sendInstagramDM,
   sendPrivateDMFromComment,
 } from '@/lib/meta/graph-api';
-import type { GraphApiOptions } from '@/lib/meta/graph-api';
+import type {
+  GraphApiOptions,
+  InstagramSenderProfile,
+} from '@/lib/meta/graph-api';
 import { validateExternalHttpsUrl } from '@/lib/integrations/urls';
 import { getRedisClient } from '@/lib/queue/upstash';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -40,12 +44,6 @@ type FlowEdge = {
 
 type FlowData = { nodes: FlowNode[]; edges: FlowEdge[] };
 
-type InstagramSenderProfile = {
-  name: string | null;
-  username: string | null;
-  avatarUrl: string | null;
-};
-
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
@@ -69,32 +67,6 @@ function extractInstagramMessageText(message: Record<string, unknown>) {
     })
     .filter(Boolean);
   return attachmentText.join(' ') || '';
-}
-
-async function resolveInstagramSenderProfile(
-  senderId: string,
-  accessToken: string,
-): Promise<InstagramSenderProfile> {
-  const version = process.env.META_GRAPH_API_VERSION ?? 'v19.0';
-  const url = new URL(
-    `https://graph.facebook.com/${version}/${encodeURIComponent(senderId)}`,
-  );
-  url.searchParams.set('fields', 'id,name,username,profile_pic');
-  url.searchParams.set('access_token', accessToken);
-  const response = await fetch(url, { cache: 'no-store' });
-  const body: unknown = await response.json().catch(() => null);
-  const profile = asRecord(body);
-  if (!response.ok || Object.keys(asRecord(profile.error)).length > 0) {
-    const error = asRecord(profile.error);
-    throw new Error(
-      textValue(error.message) || `Instagram sender profile lookup failed (HTTP ${response.status}).`,
-    );
-  }
-  return {
-    name: textValue(profile.name) || null,
-    username: textValue(profile.username) || null,
-    avatarUrl: textValue(profile.profile_pic) || null,
-  };
 }
 
 export function extractInstagramEvents(payload: Record<string, unknown>): InstagramEvent[] {
@@ -725,7 +697,7 @@ async function persistIncomingInstagramEvents(
     };
     if (account.access_token_encrypted) {
       try {
-        senderProfile = await resolveInstagramSenderProfile(
+        senderProfile = await getInstagramSenderProfile(
           event.senderId,
           decryptPageAccessToken(account.access_token_encrypted),
         );
@@ -785,7 +757,6 @@ async function persistIncomingInstagramEvents(
         },
         {
           onConflict: 'contact_id,external_event_id',
-          ignoreDuplicates: true,
         },
       );
     if (conversationError) throw conversationError;

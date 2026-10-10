@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
   decryptPageAccessToken,
+  getInstagramSenderProfile,
 } from "@/lib/meta/graph-api";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
@@ -15,13 +16,6 @@ type InstagramAccount = {
   instagram_account_id: string | null;
   instagram_page_id: string;
   access_token_encrypted: string | null;
-};
-
-type SenderProfile = {
-  id: string;
-  name: string | null;
-  username: string | null;
-  avatarUrl: string | null;
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -71,32 +65,12 @@ function extractMessageText(message: JsonRecord) {
 async function resolveSenderProfile(
   senderId: string,
   accessToken: string,
-  cache: Map<string, SenderProfile>,
-): Promise<SenderProfile> {
+  cache: Map<string, Awaited<ReturnType<typeof getInstagramSenderProfile>>>,
+) {
   const cached = cache.get(senderId);
   if (cached) return cached;
 
-  const version = process.env.META_GRAPH_API_VERSION ?? "v23.0";
-  const url = new URL(
-    `https://graph.facebook.com/${version}/${encodeURIComponent(senderId)}`,
-  );
-  url.searchParams.set("fields", "id,name,username,profile_pic");
-  // Use the bearer header so the token is not included in request URLs.
-  const response = await fetch(url, {
-    headers: { Authorization: "Bearer " + accessToken },
-    cache: "no-store",
-  });
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok || !isRecord(body) || isRecord(body.error)) {
-    throw new Error(graphErrorMessage(body, response.status));
-  }
-
-  const profile: SenderProfile = {
-    id: getString(body.id) ?? senderId,
-    name: getString(body.name),
-    username: getString(body.username),
-    avatarUrl: getString(body.profile_pic),
-  };
+  const profile = await getInstagramSenderProfile(senderId, accessToken);
   cache.set(senderId, profile);
   return profile;
 }
@@ -340,7 +314,10 @@ export async function POST(request: NextRequest) {
       }
       const accessToken = decryptPageAccessToken(account.access_token_encrypted);
       const conversations = await loadConversations(account, accessToken);
-      const profileCache = new Map<string, SenderProfile>();
+      const profileCache = new Map<
+        string,
+        Awaited<ReturnType<typeof getInstagramSenderProfile>>
+      >();
       const ownIds = new Set(
         [account.instagram_account_id, account.instagram_page_id].filter(
           (id): id is string => Boolean(id),
@@ -370,8 +347,7 @@ export async function POST(request: NextRequest) {
           const contactId = participantIds.find((id) => !ownIds.has(id));
           if (!contactId) continue;
 
-          let profile: SenderProfile = {
-            id: contactId,
+          let profile: Awaited<ReturnType<typeof getInstagramSenderProfile>> = {
             name: null,
             username: null,
             avatarUrl: null,
@@ -441,7 +417,6 @@ export async function POST(request: NextRequest) {
               },
               {
                 onConflict: "contact_id,external_event_id",
-                ignoreDuplicates: true,
               },
             );
           if (messageError) throw messageError;

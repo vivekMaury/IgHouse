@@ -274,7 +274,7 @@ export default function InboxClient({
   useEffect(() => {
     if (selectedContact) void loadMessages(selectedContact.id);
     else setMessages([]);
-  }, [loadMessages, selectedContact]);
+  }, [loadMessages, selectedContact?.id]);
 
   const syncHistoricalMessages = async () => {
     if (isSyncingMessages) return;
@@ -304,10 +304,18 @@ export default function InboxClient({
         );
       }
 
-      setContacts(await loadContacts());
+      const refreshedContacts = await loadContacts();
+      setContacts(refreshedContacts);
 
       const activeContact = selectedContactRef.current;
       if (activeContact) {
+        const refreshedContact = refreshedContacts.find(
+          (contact) => contact.id === activeContact.id,
+        );
+        if (refreshedContact) {
+          selectedContactRef.current = refreshedContact;
+          setSelectedContact(refreshedContact);
+        }
         await loadMessages(activeContact.id);
       }
       setSubscriptionToast(
@@ -757,8 +765,8 @@ export default function InboxClient({
                     <div className="truncate font-semibold text-white">
                       {selectedContact.sender_name ||
                         selectedContact.sender_username ||
-                        selectedContact.sender_id ||
                         selectedContact.username ||
+                        selectedContact.sender_id ||
                         "Instagram User"}
                     </div>
                     <div className="mt-1 flex gap-1">
@@ -775,8 +783,8 @@ export default function InboxClient({
                   <div className="truncate font-semibold text-white sm:hidden">
                     {selectedContact.sender_name ||
                       selectedContact.sender_username ||
-                      selectedContact.sender_id ||
                       selectedContact.username ||
+                      selectedContact.sender_id ||
                       "Instagram User"}
                   </div>
                 </div>

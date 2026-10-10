@@ -10,6 +10,53 @@ export type GraphApiOptions = {
 
 type GraphResponse = Record<string, unknown>;
 
+export type InstagramSenderProfile = {
+  name: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown) {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+export async function getInstagramSenderProfile(
+  senderId: string,
+  accessToken: string,
+): Promise<InstagramSenderProfile> {
+  const version = process.env.META_GRAPH_API_VERSION ?? 'v23.0';
+  if (!/^v\d+\.\d+$/.test(version)) {
+    throw new Error('META_GRAPH_API_VERSION must use the format vNN.N.');
+  }
+
+  const url = new URL(
+    `https://graph.facebook.com/${version}/${encodeURIComponent(senderId)}`,
+  );
+  url.searchParams.set('fields', 'id,name,username,profile_pic');
+  const response = await fetch(url, {
+    headers: { Authorization: 'Bearer ' + accessToken },
+    cache: 'no-store',
+  });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok || !isRecord(body) || isRecord(body.error)) {
+    const error = isRecord(body) && isRecord(body.error) ? body.error : null;
+    const message = error ? nonEmptyString(error.message) : null;
+    throw new Error(
+      message ?? `Instagram sender profile lookup failed (HTTP ${response.status}).`,
+    );
+  }
+
+  return {
+    name: nonEmptyString(body.name),
+    username: nonEmptyString(body.username),
+    avatarUrl: nonEmptyString(body.profile_pic),
+  };
+}
+
 function getPageTokenEncryptionKey(): Buffer {
   const rawKey = process.env.META_TOKEN_ENCRYPTION_KEY ?? '';
   const cleanKey = rawKey.trim().replace(/^["']|["']$/g, '');
@@ -195,7 +242,7 @@ export async function subscribeInstagramMessages(
 ) {
   const version =
     options.apiVersion ?? process.env.META_GRAPH_API_VERSION ?? 'v23.0';
-  const fields = ['messages', 'messaging_postbacks', 'feed'];
+  const fields = ['messages', 'messaging_postbacks'];
   const candidateIds =
     instagramAccountId && instagramAccountId !== pageId
       ? [pageId, instagramAccountId]
