@@ -1,5 +1,27 @@
--- Consolidated schema snapshot for a clean installation.
--- Historical migrations remain in place for databases that have already applied them.
+-- ============================================================
+-- IgHouse Master Schema (consolidated)
+-- File: supabase/migrations/20261001000000_master_schema.sql
+-- This single master file consolidates ALL historical fragment
+-- migrations into one clean, idempotent definition. It is safe
+-- to apply on a fresh database; every statement uses IF NOT EXISTS
+-- / OR REPLACE / DROP-IF-EXISTS guards.
+--
+-- Canonical tables: workspaces, workspace_members, ig_accounts,
+-- contacts, flows, conversations, workflows, automation_logs,
+-- webhook_logs, captured_leads, workspace_integrations.
+-- Compatibility projections:
+--   public.connected_accounts (id, workspace_id, page_id,
+--     instagram_account_id, is_webhook_subscribed, access_token,
+--     is_active, created_at) over ig_accounts.
+--   public.messages (id, conversation_id, instagram_message_id,
+--     message_text, is_from_user, created_at) over conversations.
+-- Live-inbox columns guaranteed:
+--   conversations(instagram_conversation_id, sender_id, sender_name,
+--     sender_username, sender_avatar_url, message_text,
+--     is_from_user, last_message, external_event_id)
+--   ig_accounts(page_id via instagram_page_id, instagram_account_id,
+--     access_token via access_token_encrypted, is_webhook_subscribed)
+-- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 

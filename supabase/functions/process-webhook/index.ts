@@ -59,10 +59,7 @@ async function processEvent(eventStr: string) {
       
       if (lastInteraction > interactionLimit) {
         // Safe to send outbound message
-        console.log(`Contact ${contact.id} is within the 24-hour window.`);
         // Add logic to trigger flow or AI response here
-      } else {
-        console.log(`Contact ${contact.id} is outside the 24-hour window. Message failed.`);
       }
     }
   }

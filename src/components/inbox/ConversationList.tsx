@@ -21,6 +21,54 @@ export default function ConversationList({
   loadError,
   onSelect,
 }: ConversationListProps) {
+  // Defensive: the sidebar must never crash even if the parent passes
+  // malformed data (null, non-array, or contacts with missing fields).
+  // No webhook warning banners are rendered here by design — the inbox
+  // works off synced history + realtime regardless of subscription state.
+  let safeConversations: Conversation[] = [];
+  try {
+    safeConversations = Array.isArray(conversations) ? conversations : [];
+  } catch {
+    safeConversations = [];
+  }
+  const safePreviews: Record<string, string> =
+    previews && typeof previews === "object" ? previews : {};
+
+  const displayName = (conversation: Conversation): string => {
+    try {
+      return (
+        conversation?.sender_username?.trim() ||
+        conversation?.username?.trim() ||
+        conversation?.sender_name?.trim() ||
+        conversation?.sender_id?.trim() ||
+        "Unknown User"
+      );
+    } catch {
+      return "Unknown User";
+    }
+  };
+
+  const displayTime = (value: string | null | undefined): string => {
+    try {
+      if (!value) return "Never";
+      const time = new Date(value).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      return time || "Never";
+    } catch {
+      return "Never";
+    }
+  };
+
+  const handleSelect = (conversation: Conversation) => {
+    try {
+      onSelect(conversation);
+    } catch {
+      // Sidebar selection must never crash the inbox.
+    }
+  };
+
   return (
     <aside
       className={`${
@@ -33,50 +81,49 @@ export default function ConversationList({
         </p>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {conversations.map((conversation) => (
-          <button
-            type="button"
-            key={conversation.id}
-            onClick={() => onSelect(conversation)}
-            className={`flex w-full min-w-0 items-center gap-3 border-b border-white/[0.06] px-4 py-4 text-left transition-colors hover:bg-white/[0.06] ${
-              selectedConversation?.id === conversation.id
-                ? "border-l-2 border-l-blue-500 bg-blue-500/10"
-                : "border-l-2 border-l-transparent"
-            }`}
-          >
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10">
-              {conversation.sender_avatar_url ? (
-                <img
-                  src={conversation.sender_avatar_url}
-                  alt=""
-                  className="h-10 w-10 rounded-full object-cover"
-                />
-              ) : (
-                <User size={20} className="text-slate-300" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-medium text-slate-100">
-                {conversation.username || "Unknown User"}
+        {safeConversations.map((conversation) => {
+          const key = conversation?.id ?? Math.random().toString(36).slice(2);
+          const preview = safePreviews[conversation?.id ?? ""];
+          return (
+            <button
+              type="button"
+              key={key}
+              onClick={() => handleSelect(conversation)}
+              className={`flex w-full min-w-0 items-center gap-3 border-b border-white/[0.06] px-4 py-4 text-left transition-colors hover:bg-white/[0.06] ${
+                selectedConversation?.id === conversation?.id
+                  ? "border-l-2 border-l-blue-500 bg-blue-500/10"
+                  : "border-l-2 border-l-transparent"
+              }`}
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10">
+                {conversation?.sender_avatar_url ? (
+                  <img
+                    src={conversation.sender_avatar_url}
+                    alt=""
+                    className="h-10 w-10 rounded-full object-cover"
+                  />
+                ) : (
+                  <User size={20} className="text-slate-300" />
+                )}
               </div>
-              <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
-                <Clock size={12} />
-                {conversation.last_interaction_at
-                  ? new Date(conversation.last_interaction_at).toLocaleTimeString(
-                      [],
-                      { hour: "2-digit", minute: "2-digit" },
-                    )
-                  : "Never"}
-              </div>
-              {previews[conversation.id] && (
-                <div className="mt-1 truncate text-xs text-blue-300">
-                  {previews[conversation.id]}
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium text-slate-100">
+                  {displayName(conversation)}
                 </div>
-              )}
-            </div>
-          </button>
-        ))}
-        {conversations.length === 0 && (
+                <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
+                  <Clock size={12} />
+                  {displayTime(conversation?.last_interaction_at)}
+                </div>
+                {preview && (
+                  <div className="mt-1 truncate text-xs text-blue-300">
+                    {preview}
+                  </div>
+                )}
+              </div>
+            </button>
+          );
+        })}
+        {safeConversations.length === 0 && (
           <div className="p-6 text-center text-sm text-slate-400">
             No conversations yet. Sync DMs or wait for new Instagram messages.
           </div>
