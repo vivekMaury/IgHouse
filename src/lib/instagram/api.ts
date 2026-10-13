@@ -27,34 +27,38 @@ function nonEmptyString(value: unknown) {
 export async function getInstagramSenderProfile(
   senderId: string,
   accessToken: string,
-  apiVersion = process.env.META_GRAPH_API_VERSION ?? 'v23.0',
+  apiVersion = process.env.META_GRAPH_API_VERSION ?? 'v19.0',
 ): Promise<InstagramSenderProfile> {
-  if (!/^v\d+\.\d+$/.test(apiVersion)) {
-    throw new Error('META_GRAPH_API_VERSION must use the format vNN.N.');
+  const cleanVersion = /^v\d+\.\d+$/.test(apiVersion) ? apiVersion : 'v19.0';
+
+  const endpoints = [
+    `https://graph.facebook.com/${cleanVersion}/${encodeURIComponent(senderId)}?fields=id,name,username,profile_pic`,
+    `https://graph.facebook.com/${cleanVersion}/${encodeURIComponent(senderId)}?fields=name,username`,
+    `https://graph.instagram.com/${cleanVersion}/${encodeURIComponent(senderId)}?fields=name,username,profile_pic`,
+    `https://graph.instagram.com/${cleanVersion}/${encodeURIComponent(senderId)}?fields=name,username`,
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Authorization: 'Bearer ' + accessToken },
+        cache: 'no-store',
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (response.ok && isRecord(body) && !isRecord(body.error)) {
+        const name = nonEmptyString(body.name);
+        const username = nonEmptyString(body.username);
+        const avatarUrl = nonEmptyString(body.profile_pic) ?? nonEmptyString(body.profile_picture_url);
+        if (name || username || avatarUrl) {
+          return { name, username, avatarUrl };
+        }
+      }
+    } catch {
+      // Continue to next endpoint fallback
+    }
   }
 
-  const url = new URL(
-    `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(senderId)}`,
-  );
-  url.searchParams.set('fields', 'id,name,username,profile_pic');
-  const response = await fetch(url, {
-    headers: { Authorization: 'Bearer ' + accessToken },
-    cache: 'no-store',
-  });
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok || !isRecord(body) || isRecord(body.error)) {
-    const error = isRecord(body) && isRecord(body.error) ? body.error : null;
-    const message = error ? nonEmptyString(error.message) : null;
-    throw new Error(
-      message ?? `Instagram sender profile lookup failed (HTTP ${response.status}).`,
-    );
-  }
-
-  return {
-    name: nonEmptyString(body.name),
-    username: nonEmptyString(body.username),
-    avatarUrl: nonEmptyString(body.profile_pic),
-  };
+  return { name: null, username: null, avatarUrl: null };
 }
 
 function getPageTokenEncryptionKey(): Buffer {

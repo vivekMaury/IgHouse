@@ -70,12 +70,15 @@ export default function ChatView({
               </div>
               <div className="hidden min-w-0 sm:block">
                 <div className="truncate font-semibold text-white">
-                  {conversation.sender_username
+                  {conversation.sender_username && !/^\d{10,}$/.test(conversation.sender_username)
                     ? `@${conversation.sender_username.replace(/^@/, "")}`
-                    : conversation.username ||
-                      conversation.sender_name ||
-                      conversation.sender_id ||
-                      "Instagram User"}
+                    : conversation.sender_name && !/^\d{10,}$/.test(conversation.sender_name)
+                    ? conversation.sender_name
+                    : conversation.username && !/^\d{10,}$/.test(conversation.username)
+                    ? `@${conversation.username.replace(/^@/, "")}`
+                    : conversation.sender_id
+                    ? `User ${conversation.sender_id.slice(-4)}`
+                    : "Instagram User"}
                 </div>
                 {conversation.sender_name &&
                   conversation.sender_username &&
@@ -96,12 +99,15 @@ export default function ChatView({
                 </div>
               </div>
               <div className="truncate font-semibold text-white sm:hidden">
-                {conversation.sender_username
+                {conversation.sender_username && !/^\d{10,}$/.test(conversation.sender_username)
                   ? `@${conversation.sender_username.replace(/^@/, "")}`
-                  : conversation.username ||
-                    conversation.sender_name ||
-                    conversation.sender_id ||
-                    "Instagram User"}
+                  : conversation.sender_name && !/^\d{10,}$/.test(conversation.sender_name)
+                  ? conversation.sender_name
+                  : conversation.username && !/^\d{10,}$/.test(conversation.username)
+                  ? `@${conversation.username.replace(/^@/, "")}`
+                  : conversation.sender_id
+                  ? `User ${conversation.sender_id.slice(-4)}`
+                  : "Instagram User"}
               </div>
             </div>
             <button
@@ -126,26 +132,36 @@ export default function ChatView({
                 No messages yet.
               </div>
             ) : (
-              messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex min-w-0 ${
-                    message.direction === "outbound"
-                      ? "justify-end"
-                      : "justify-start"
-                  }`}
-                >
+              messages.map((message) => {
+                const rawText = message.message_text ?? message.message_body;
+                const displayText =
+                  rawText && rawText !== "[Instagram message]"
+                    ? rawText
+                    : message.direction === "outbound"
+                    ? "Message sent via Instagram"
+                    : "[Photo/Media]";
+
+                return (
                   <div
-                    className={`max-w-[85%] break-words rounded-2xl px-4 py-2.5 text-sm shadow-sm sm:max-w-[70%] ${
+                    key={message.id}
+                    className={`flex min-w-0 ${
                       message.direction === "outbound"
-                        ? "rounded-br-sm bg-blue-600 text-white"
-                        : "rounded-bl-sm border border-white/10 bg-zinc-900 text-slate-100"
+                        ? "justify-end"
+                        : "justify-start"
                     }`}
                   >
-                    {message.message_text ?? message.message_body}
+                    <div
+                      className={`max-w-[85%] break-words rounded-2xl px-4 py-2.5 text-sm shadow-sm sm:max-w-[70%] ${
+                        message.direction === "outbound"
+                          ? "rounded-br-sm bg-blue-600 text-white"
+                          : "rounded-bl-sm border border-white/10 bg-zinc-900 text-slate-100"
+                      }`}
+                    >
+                      {displayText}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
             <div ref={messagesEndRef} />
           </div>

@@ -41,23 +41,53 @@ function errorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-function extractMessageText(message: JsonRecord) {
-  const text = getString(message.message) ?? getString(message.text);
-  if (text) return text;
+function extractMessageText(message: JsonRecord): string | null {
+  const directText = getString(message.message) ?? getString(message.text) ?? getString(message.body);
+  if (directText && directText !== "[Instagram message]") return directText;
+
+  if (isRecord(message.message)) {
+    const nested =
+      getString(message.message.text) ??
+      getString(message.message.message) ??
+      getString(message.message.body);
+    if (nested && nested !== "[Instagram message]") return nested;
+  }
+
+  const snippet = getString(message.snippet);
+  if (snippet && snippet !== "[Instagram message]") return snippet;
+
+  if (isRecord(message.shares)) {
+    const shareItems = Array.isArray(message.shares.data) ? message.shares.data : [message.shares];
+    for (const item of shareItems) {
+      if (isRecord(item)) {
+        const title = getString(item.name) ?? getString(item.title) ?? getString(item.description) ?? getString(item.link);
+        if (title) return `[Shared: ${title}]`;
+      }
+    }
+    return "[Shared Post]";
+  }
+
+  if (message.story || message.story_share || message.story_reply) {
+    return "[Story Reply]";
+  }
 
   const attachments = isRecord(message.attachments)
     ? message.attachments.data
     : message.attachments;
-  if (Array.isArray(attachments)) {
-    const labels = attachments.map((attachment: unknown) => {
-      if (!isRecord(attachment)) return null;
-      const type = getString(attachment.type)?.toLowerCase();
-      if (type === "sticker") return "[Sticker]";
-      if (type) return "[Media/Image]";
-      return null;
-    }).filter(
-      (label): label is "[Sticker]" | "[Media/Image]" => label !== null,
-    );
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    const labels = attachments
+      .map((attachment: unknown) => {
+        if (!isRecord(attachment)) return null;
+        const type = getString(attachment.type)?.toLowerCase();
+        if (type === "sticker") return "[Sticker]";
+        if (type === "audio" || type === "voice") return "[Voice Message]";
+        if (type === "video") return "[Video]";
+        if (type === "image" || type === "photo") return "[Photo]";
+        if (type) return `[${type.charAt(0).toUpperCase() + type.slice(1)}]`;
+        if (attachment.image_data || attachment.file_url || attachment.video_data) return "[Photo/Media]";
+        return "[Media]";
+      })
+      .filter((label): label is string => Boolean(label));
     if (labels.length > 0) return labels.join(" ");
   }
 
@@ -72,13 +102,19 @@ async function resolveSenderProfile(
   const cached = cache.get(senderId);
   if (cached) return cached;
 
-  const profile = await getInstagramSenderProfile(
-    senderId,
-    accessToken,
-    graphApiVersion,
-  );
-  cache.set(senderId, profile);
-  return profile;
+  try {
+    const profile = await getInstagramSenderProfile(
+      senderId,
+      accessToken,
+      graphApiVersion,
+    );
+    cache.set(senderId, profile);
+    return profile;
+  } catch {
+    const fallback = { name: null, username: null, avatarUrl: null };
+    cache.set(senderId, fallback);
+    return fallback;
+  }
 }
 
 function getId(value: unknown): string | null {
@@ -117,16 +153,20 @@ function graphErrorMessage(body: unknown, status: number) {
   return `Meta Graph API returned an invalid response (HTTP ${status}).`;
 }
 
+function isAllowedGraphHost(hostname: string) {
+  return hostname === "graph.facebook.com" || hostname === "graph.instagram.com";
+}
+
 async function fetchGraphPages(initialUrl: URL, accessToken: string) {
   const items: JsonRecord[] = [];
   let nextUrl: URL | null = initialUrl;
   let pageCount = 0;
 
   while (nextUrl && pageCount < 100) {
-    if (nextUrl.hostname !== "graph.facebook.com" || nextUrl.protocol !== "https:") {
+    if (!isAllowedGraphHost(nextUrl.hostname) || nextUrl.protocol !== "https:") {
       throw new Error("Meta returned an invalid pagination URL.");
     }
-    nextUrl.searchParams.delete("access_token");
+    nextUrl.searchParams.set("access_token", accessToken);
     const response = await fetch(nextUrl, {
       headers: { Authorization: "Bearer " + accessToken },
       cache: "no-store",
@@ -155,72 +195,110 @@ async function fetchGraphPages(initialUrl: URL, accessToken: string) {
   return items;
 }
 
-async function fetchMessagePages(messages: unknown, accessToken: string) {
-  if (!isRecord(messages)) return [];
+async function fetchMessagePages(
+  messages: unknown,
+  conversationId: string | null,
+  accessToken: string,
+) {
+  const items: JsonRecord[] = [];
 
-  const items: JsonRecord[] = Array.isArray(messages.data)
-    ? messages.data.filter(isRecord)
-    : [];
-  const paging = isRecord(messages.paging) ? messages.paging : null;
-  const firstNextPage = paging ? getString(paging.next) : null;
-  let nextUrl: URL | null = firstNextPage ? new URL(firstNextPage) : null;
-  let pageCount = 0;
+  if (isRecord(messages) && Array.isArray(messages.data) && messages.data.length > 0) {
+    items.push(...messages.data.filter(isRecord));
+    const paging = isRecord(messages.paging) ? messages.paging : null;
+    const firstNextPage = paging ? getString(paging.next) : null;
+    let nextUrl: URL | null = firstNextPage ? new URL(firstNextPage) : null;
+    let pageCount = 0;
 
-  while (nextUrl && pageCount < 100) {
-    if (nextUrl.hostname !== "graph.facebook.com" || nextUrl.protocol !== "https:") {
-      throw new Error("Meta returned an invalid message pagination URL.");
+    while (nextUrl && pageCount < 100) {
+      if (!isAllowedGraphHost(nextUrl.hostname) || nextUrl.protocol !== "https:") {
+        break;
+      }
+      nextUrl.searchParams.set("access_token", accessToken);
+      const response = await fetch(nextUrl, {
+        headers: { Authorization: "Bearer " + accessToken },
+        cache: "no-store",
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isRecord(body) || isRecord(body.error)) {
+        break;
+      }
+      if (Array.isArray(body.data)) {
+        items.push(...body.data.filter(isRecord));
+      }
+      const nextPaging = isRecord(body.paging) ? body.paging : null;
+      const next = nextPaging ? getString(nextPaging.next) : null;
+      nextUrl = next ? new URL(next) : null;
+      pageCount += 1;
     }
-    nextUrl.searchParams.delete("access_token");
-    const response = await fetch(nextUrl, {
-      headers: { Authorization: "Bearer " + accessToken },
-      cache: "no-store",
-    });
-    const body: unknown = await response.json().catch(() => null);
-    if (!response.ok || !isRecord(body) || isRecord(body.error)) {
-      throw new Error(graphErrorMessage(body, response.status));
-    }
+  } else if (conversationId) {
+    // If conversation.messages was not embedded, query the conversation's messages edge directly
+    try {
+      const url = new URL(
+        `https://graph.facebook.com/${graphApiVersion}/${encodeURIComponent(conversationId)}/messages`,
+      );
+      url.searchParams.set(
+        "fields",
+        "id,message,created_time,from{id,username,name},to{id,username,name},attachments,shares",
+      );
+      url.searchParams.set("limit", "100");
+      url.searchParams.set("access_token", accessToken);
 
-    if (Array.isArray(body.data)) {
-      items.push(...body.data.filter(isRecord));
+      const response = await fetch(url, {
+        headers: { Authorization: "Bearer " + accessToken },
+        cache: "no-store",
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (response.ok && isRecord(body) && Array.isArray(body.data)) {
+        items.push(...body.data.filter(isRecord));
+      }
+    } catch {
+      // Continue with whatever items were collected
     }
-    const nextPaging = isRecord(body.paging) ? body.paging : null;
-    const next = nextPaging ? getString(nextPaging.next) : null;
-    nextUrl = next ? new URL(next) : null;
-    pageCount += 1;
   }
 
-  if (nextUrl) {
-    throw new Error("Meta returned too many pages of Instagram messages.");
-  }
   return items;
 }
 
 async function loadConversations(account: InstagramAccount, accessToken: string) {
-  // Instagram conversations are queried through the linked Facebook Page node.
-  const conversationOwnerId = account.instagram_page_id;
-  if (!conversationOwnerId) {
+  const candidateIds = [
+    account.instagram_page_id,
+    account.instagram_account_id,
+  ].filter((id): id is string => Boolean(id));
+
+  if (candidateIds.length === 0) {
     throw new Error(
-      "The connected account is missing its Facebook Page ID. Reconnect the account and try syncing again.",
+      "The connected account is missing its Facebook Page ID or Instagram Account ID. Reconnect the account and try syncing again.",
     );
   }
-  const url = new URL(
-    `https://graph.facebook.com/${graphApiVersion}/${encodeURIComponent(conversationOwnerId)}/conversations`,
-  );
-  url.searchParams.set("platform", "instagram");
-  url.searchParams.set(
-    "fields",
-    "id,participants,messages.limit(100){id,message,created_time,from,to,attachments}",
-  );
 
-  try {
-    return await fetchGraphPages(url, accessToken);
-  } catch (error) {
-    console.error("Meta could not fetch Instagram Page conversations.", {
-      accountId: account.id,
-      error,
-    });
-    throw error;
+  const fieldOptions = [
+    "id,participants{id,username,name,profile_pic},messages.limit(100){id,message,created_time,from{id,username,name},to{id,username,name},attachments,shares}",
+    "id,participants{id,username,name},messages.limit(100){id,message,created_time,from,to,attachments}",
+    "id,participants,messages.limit(100){id,message,created_time,from,to,attachments}",
+  ];
+
+  let lastError: unknown = null;
+
+  for (const ownerId of candidateIds) {
+    for (const fields of fieldOptions) {
+      try {
+        const url = new URL(
+          `https://graph.facebook.com/${graphApiVersion}/${encodeURIComponent(ownerId)}/conversations`,
+        );
+        url.searchParams.set("platform", "instagram");
+        url.searchParams.set("fields", fields);
+        const results = await fetchGraphPages(url, accessToken);
+        if (results.length > 0) return results;
+      } catch (err) {
+        lastError = err;
+      }
+    }
   }
+
+  if (lastError) {
+    throw lastError;
+  }
+  return [];
 }
 
 export async function POST(request: NextRequest) {
@@ -308,7 +386,17 @@ export async function POST(request: NextRequest) {
   let syncedMessages = 0;
   let syncedConversations = 0;
   try {
-    const admin = createAdminClient();
+    let admin: any;
+    try {
+      if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        admin = createAdminClient();
+      } else {
+        admin = supabase;
+      }
+    } catch {
+      admin = supabase;
+    }
+
     for (const account of accounts as InstagramAccount[]) {
       if (!account.access_token_encrypted) {
         throw new Error(`Connected Instagram account ${account.id} has no access token.`);
@@ -327,7 +415,11 @@ export async function POST(request: NextRequest) {
 
       for (const conversation of conversations) {
         const conversationMessages = (
-          await fetchMessagePages(conversation.messages, accessToken)
+          await fetchMessagePages(
+            conversation.messages,
+            getString(conversation.id),
+            accessToken,
+          )
         ).sort((left, right) => {
           const leftTime = Date.parse(getString(left.created_time) ?? "");
           const rightTime = Date.parse(getString(right.created_time) ?? "");
@@ -372,35 +464,53 @@ export async function POST(request: NextRequest) {
             (getId(message.from) === contactId ? message.from : undefined);
           const senderName =
             profile.name ??
-            (isRecord(contactProfile) ? getString(contactProfile.name) : null);
+            (isRecord(contactProfile) ? (getString(contactProfile.name) ?? null) : null);
           const senderUsername =
             profile.username ??
-            (isRecord(contactProfile) ? getString(contactProfile.username) : null);
-          const username = senderUsername ?? senderName ?? contactId;
+            (isRecord(contactProfile) ? (getString(contactProfile.username) ?? null) : null);
+          const username =
+            senderUsername ??
+            senderName ??
+            (contactId ? `User ${contactId.slice(-4)}` : contactId);
+
+          const contactUpsertData: Record<string, unknown> = {
+            ig_account_id: account.id,
+            ig_scoped_user_id: contactId,
+            sender_id: contactId,
+            last_interaction_at: getString(message.created_time) ?? new Date().toISOString(),
+          };
+          if (senderName) contactUpsertData.sender_name = senderName;
+          if (senderUsername) contactUpsertData.sender_username = senderUsername;
+          if (profile.avatarUrl) contactUpsertData.sender_avatar_url = profile.avatarUrl;
+          if (username) contactUpsertData.username = username;
+
           const { data: contact, error: contactError } = await admin
             .from("contacts")
-            .upsert(
-              {
-                ig_account_id: account.id,
-                ig_scoped_user_id: contactId,
-                sender_id: contactId,
-                sender_name: senderName,
-                sender_username: senderUsername,
-                sender_avatar_url: profile.avatarUrl,
-                username,
-                last_interaction_at: getString(message.created_time) ?? new Date().toISOString(),
-              },
-              { onConflict: "ig_account_id,ig_scoped_user_id" },
-            )
+            .upsert(contactUpsertData, {
+              onConflict: "ig_account_id,ig_scoped_user_id",
+            })
             .select("id")
             .single();
           if (contactError) throw contactError;
 
           const createdAt = getString(message.created_time);
           const messageText =
-            extractMessageText(message) ?? "[Media/Image]";
+            extractMessageText(message) ?? "[Photo/Media]";
           const direction =
             fromId && ownIds.has(fromId) ? "outbound" : "inbound";
+          const messageSenderId =
+            direction === "outbound"
+              ? (account.instagram_account_id ?? fromId ?? account.id)
+              : contactId;
+          const messageSenderName =
+            direction === "outbound" ? (account.name ?? "You") : senderName;
+          const messageSenderUsername =
+            direction === "outbound" ? (account.username ?? null) : senderUsername;
+          const messageSenderAvatar =
+            direction === "outbound"
+              ? (account.profile_picture_url ?? null)
+              : profile.avatarUrl;
+
           const { error: messageError } = await admin
             .from("conversations")
             .upsert(
@@ -409,10 +519,10 @@ export async function POST(request: NextRequest) {
                 direction,
                 message_body: messageText,
                 message_text: messageText,
-                sender_id: contactId,
-                sender_name: senderName,
-                sender_username: senderUsername,
-                sender_avatar_url: profile.avatarUrl,
+                sender_id: messageSenderId,
+                sender_name: messageSenderName,
+                sender_username: messageSenderUsername,
+                sender_avatar_url: messageSenderAvatar,
                 is_from_user: direction === "inbound",
                 instagram_conversation_id: getString(conversation.id),
                 last_message: messageText,

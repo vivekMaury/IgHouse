@@ -34,21 +34,29 @@ export default async function InboxPage() {
       .order("last_interaction_at", { ascending: false, nullsFirst: false });
     if (contactsError) throw contactsError;
 
-    initialContacts = (contacts ?? []).map((contact) => ({
-      id: contact.id,
-      sender_id: contact.sender_id ?? null,
-      sender_name: contact.sender_name ?? null,
-      sender_username: contact.sender_username ?? null,
-      sender_avatar_url: contact.sender_avatar_url ?? null,
-      username:
-        contact.sender_username ??
-        contact.username ??
-        contact.sender_name ??
-        contact.sender_id ??
-        "Unknown User",
-      tags: contact.tags ?? [],
-      last_interaction_at: contact.last_interaction_at,
-    }));
+    initialContacts = (contacts ?? []).map((contact) => {
+      const rawName =
+        contact.sender_username?.trim() ||
+        contact.sender_name?.trim() ||
+        contact.username?.trim();
+      const displayName =
+        rawName && !/^\d{10,}$/.test(rawName)
+          ? rawName
+          : contact.sender_id
+          ? `User ${contact.sender_id.slice(-4)}`
+          : "Instagram User";
+
+      return {
+        id: contact.id,
+        sender_id: contact.sender_id ?? null,
+        sender_name: contact.sender_name ?? null,
+        sender_username: contact.sender_username ?? null,
+        sender_avatar_url: contact.sender_avatar_url ?? null,
+        username: displayName,
+        tags: contact.tags ?? [],
+        last_interaction_at: contact.last_interaction_at,
+      };
+    });
   } catch (error) {
     console.error("Live Inbox contacts could not be loaded; rendering an empty list.", error);
   }
@@ -65,11 +73,21 @@ export default async function InboxPage() {
         .order("created_at", { ascending: true });
       if (messagesError) throw messagesError;
 
-      initialMessages = (messages ?? []).map((message) => ({
-        ...message,
-        direction: message.direction === "outbound" ? "outbound" : "inbound",
-        message_body: message.message_text ?? message.message_body ?? "",
-      }));
+      initialMessages = (messages ?? []).map((message) => {
+        const raw = message.message_text ?? message.message_body ?? "";
+        const cleanBody =
+          raw && raw !== "[Instagram message]"
+            ? raw
+            : message.direction === "outbound"
+            ? "Message sent via Instagram"
+            : "[Photo/Media]";
+
+        return {
+          ...message,
+          direction: message.direction === "outbound" ? "outbound" : "inbound",
+          message_body: cleanBody,
+        };
+      });
     } catch (error) {
       console.error("Live Inbox messages could not be loaded.", error);
     }

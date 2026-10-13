@@ -66,17 +66,34 @@ export default function LiveInboxClient({
     try {
       const { data, error } = await supabase
         .from("conversations")
-        .select("id, contact_id, direction, message_body, message_text, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, created_at")
+        .select("id, contact_id, direction, message_body, message_text, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, metadata, created_at")
         .eq("contact_id", contactId)
         .order("created_at", { ascending: true });
 
       if (error) throw error;
       setMessages(
-        (data ?? []).map((message) => ({
-          ...message,
-          direction: message.direction === "outbound" ? "outbound" : "inbound",
-          message_body: message.message_text ?? message.message_body ?? "",
-        })),
+        (data ?? []).map((message) => {
+          const raw = message.message_text ?? message.message_body ?? "";
+          const metaText =
+            message.metadata && typeof message.metadata === "object"
+              ? (message.metadata as Record<string, unknown>).text ??
+                (message.metadata as Record<string, unknown>).raw_message
+              : null;
+          const cleanBody =
+            raw && raw !== "[Instagram message]"
+              ? raw
+              : typeof metaText === "string" && metaText && metaText !== "[Instagram message]"
+              ? metaText
+              : message.direction === "outbound"
+              ? "Message sent via Instagram"
+              : "[Photo/Media]";
+
+          return {
+            ...message,
+            direction: message.direction === "outbound" ? "outbound" : "inbound",
+            message_body: cleanBody,
+          };
+        }),
       );
       setSendError(null);
     } catch (error) {
@@ -90,49 +107,41 @@ export default function LiveInboxClient({
     if (workspaceId) {
       try {
         const { data, error } = await supabase
-          .from("conversations")
+          .from("contacts")
           .select(
-            "created_at, contact:contacts!inner(id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at, ig_account:ig_accounts!inner(workspace_id))",
+            "id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at, ig_account:ig_accounts!inner(workspace_id)",
           )
-          .eq("contact.ig_account.workspace_id", workspaceId)
-          .order("created_at", { ascending: false });
+          .eq("ig_account.workspace_id", workspaceId)
+          .order("last_interaction_at", { ascending: false, nullsFirst: false });
         if (error) throw error;
 
-        const contactsById = new Map<string, Conversation>();
-        for (const row of data ?? []) {
-          const contactData = row.contact;
-          if (!contactData || Array.isArray(contactData)) continue;
-          const contact = contactData as {
-            id: string;
-            username: string | null;
-            tags: string[] | null;
-            sender_id: string | null;
-            sender_name: string | null;
-            sender_username: string | null;
-            sender_avatar_url: string | null;
-            last_interaction_at: string | null;
-          };
-          if (contactsById.has(contact.id)) continue;
-          contactsById.set(contact.id, {
-            id: contact.id,
-            username:
-              contact.sender_username ??
-              contact.username ??
-              contact.sender_name ??
-              contact.sender_id ??
-              "Unknown User",
-            sender_id: contact.sender_id,
-            sender_name: contact.sender_name,
-            sender_username: contact.sender_username,
-            sender_avatar_url: contact.sender_avatar_url,
-            tags: contact.tags ?? [],
-            last_interaction_at: contact.last_interaction_at ?? row.created_at,
+        if (Array.isArray(data) && data.length > 0) {
+          return data.map((contact) => {
+            const rawName =
+              contact.sender_username?.trim() ||
+              contact.sender_name?.trim() ||
+              contact.username?.trim();
+            const displayName =
+              rawName && !/^\d{10,}$/.test(rawName)
+                ? rawName
+                : contact.sender_id
+                ? `User ${contact.sender_id.slice(-4)}`
+                : "Instagram User";
+            return {
+              id: contact.id,
+              username: displayName,
+              sender_id: contact.sender_id,
+              sender_name: contact.sender_name,
+              sender_username: contact.sender_username,
+              sender_avatar_url: contact.sender_avatar_url,
+              tags: contact.tags ?? [],
+              last_interaction_at: contact.last_interaction_at,
+            };
           });
         }
-        return Array.from(contactsById.values());
       } catch (error) {
         console.error(
-          "Workspace conversation contact fetch failed; falling back to the contacts table.",
+          "Workspace contact fetch failed; falling back to direct contacts query.",
           error,
         );
       }
@@ -144,21 +153,28 @@ export default function LiveInboxClient({
         .select("id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at")
         .order("last_interaction_at", { ascending: false, nullsFirst: false });
       if (error) throw error;
-      return (data ?? []).map((contact) => ({
-        id: contact.id,
-        username:
-          contact.sender_username ??
-          contact.username ??
-          contact.sender_name ??
-          contact.sender_id ??
-          "Unknown User",
-        sender_id: contact.sender_id,
-        sender_name: contact.sender_name,
-        sender_username: contact.sender_username,
-        sender_avatar_url: contact.sender_avatar_url,
-        tags: contact.tags ?? [],
-        last_interaction_at: contact.last_interaction_at,
-      }));
+      return (data ?? []).map((contact) => {
+        const rawName =
+          contact.sender_username?.trim() ||
+          contact.sender_name?.trim() ||
+          contact.username?.trim();
+        const displayName =
+          rawName && !/^\d{10,}$/.test(rawName)
+            ? rawName
+            : contact.sender_id
+            ? `User ${contact.sender_id.slice(-4)}`
+            : "Instagram User";
+        return {
+          id: contact.id,
+          username: displayName,
+          sender_id: contact.sender_id,
+          sender_name: contact.sender_name,
+          sender_username: contact.sender_username,
+          sender_avatar_url: contact.sender_avatar_url,
+          tags: contact.tags ?? [],
+          last_interaction_at: contact.last_interaction_at,
+        };
+      });
     } catch (error) {
       console.error("Live Inbox contacts could not be refreshed.", error);
       return initialContacts;
@@ -254,14 +270,22 @@ export default function LiveInboxClient({
             const incoming = payload.new as Message;
             if (!incoming.id || !incoming.contact_id) return;
 
+            const rawIncomingText = incoming.message_text ?? incoming.message_body ?? "";
+            const cleanIncomingText =
+              rawIncomingText && rawIncomingText !== "[Instagram message]"
+                ? rawIncomingText
+                : incoming.direction === "outbound"
+                ? "Message sent via Instagram"
+                : "[Photo/Media]";
+
             const normalizedIncoming = {
               ...incoming,
-              message_body: incoming.message_text ?? incoming.message_body ?? "",
+              message_body: cleanIncomingText,
             };
             setContactPreviews((current) => ({
               ...current,
               [incoming.contact_id]:
-                normalizedIncoming.message_body || "New Instagram message",
+                cleanIncomingText || "New Instagram message",
             }));
             setContacts((current) =>
               current
@@ -293,14 +317,20 @@ export default function LiveInboxClient({
                 .maybeSingle();
             if (contactError) throw contactError;
             if (refreshedContact) {
+              const rawName =
+                refreshedContact.sender_username?.trim() ||
+                refreshedContact.sender_name?.trim() ||
+                refreshedContact.username?.trim();
+              const displayName =
+                rawName && !/^\d{10,}$/.test(rawName)
+                  ? rawName
+                  : refreshedContact.sender_id
+                  ? `User ${refreshedContact.sender_id.slice(-4)}`
+                  : "Instagram User";
+
               const contact: Conversation = {
                 id: refreshedContact.id,
-                username:
-                  refreshedContact.sender_username ??
-                  refreshedContact.username ??
-                  refreshedContact.sender_name ??
-                  refreshedContact.sender_id ??
-                  "Unknown User",
+                username: displayName,
                 sender_id: refreshedContact.sender_id,
                 sender_name: refreshedContact.sender_name,
                 sender_username: refreshedContact.sender_username,

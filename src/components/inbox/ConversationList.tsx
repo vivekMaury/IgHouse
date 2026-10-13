@@ -36,15 +36,21 @@ export default function ConversationList({
 
   const displayName = (conversation: Conversation): string => {
     try {
-      return (
+      const raw =
         conversation?.sender_username?.trim() ||
-        conversation?.username?.trim() ||
         conversation?.sender_name?.trim() ||
-        conversation?.sender_id?.trim() ||
-        "Unknown User"
-      );
+        conversation?.username?.trim();
+
+      if (!raw || /^\d{10,}$/.test(raw)) {
+        if (conversation?.sender_name?.trim() && !/^\d{10,}$/.test(conversation.sender_name.trim())) {
+          return conversation.sender_name.trim();
+        }
+        const id = conversation?.sender_id || conversation?.id || raw || "";
+        return id ? `User ${id.slice(-4)}` : "Instagram User";
+      }
+      return raw.replace(/^@/, "");
     } catch {
-      return "Unknown User";
+      return "Instagram User";
     }
   };
 
@@ -116,7 +122,7 @@ export default function ConversationList({
                 </div>
                 {preview && (
                   <div className="mt-1 truncate text-xs text-blue-300">
-                    {preview}
+                    {preview === "[Instagram message]" ? "[Photo/Media]" : preview}
                   </div>
                 )}
               </div>
