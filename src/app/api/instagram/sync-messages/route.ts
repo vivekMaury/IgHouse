@@ -18,6 +18,9 @@ type InstagramAccount = {
   instagram_account_id: string | null;
   instagram_page_id: string;
   access_token_encrypted: string | null;
+  name?: string | null;
+  username?: string | null;
+  profile_picture_url?: string | null;
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -356,7 +359,7 @@ export async function POST(request: NextRequest) {
 
     let accountQuery = supabase
       .from("ig_accounts")
-      .select("id, instagram_account_id, instagram_page_id, access_token_encrypted")
+      .select("id, instagram_account_id, instagram_page_id, access_token_encrypted, name, username, profile_picture_url")
       .eq("workspace_id", workspaceId)
       .eq("is_active", true);
     if (accountId) accountQuery = accountQuery.eq("id", accountId);
