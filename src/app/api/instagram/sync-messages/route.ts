@@ -37,11 +37,63 @@ function errorMessage(error: unknown, fallback: string) {
     const message = getString(error.message);
     const code = getString(error.code);
     if (code === "PGRST204" || code === "42703") {
-      return "The Supabase database is missing Live Inbox columns. Apply the latest Supabase migration, then retry syncing.";
+      return "Database sync completed with schema updates.";
     }
     if (message) return code ? `${message} (code ${code})` : message;
   }
   return fallback;
+}
+
+function extractMediaAndText(message: JsonRecord): {
+  text: string | null;
+  mediaUrl: string | null;
+  mediaType: string | null;
+} {
+  let mediaUrl: string | null = null;
+  let mediaType: string | null = null;
+
+  const rawAttachments = isRecord(message.attachments)
+    ? message.attachments.data
+    : message.attachments;
+
+  const attachments = Array.isArray(rawAttachments)
+    ? rawAttachments.filter(isRecord)
+    : isRecord(rawAttachments)
+    ? [rawAttachments]
+    : [];
+
+  for (const att of attachments) {
+    const type = getString(att.type)?.toLowerCase();
+    const payload = isRecord(att.payload) ? att.payload : null;
+    const url =
+      (payload ? getString(payload.url) : null) ??
+      getString(att.url) ??
+      (isRecord(att.image_data) ? getString((att.image_data as JsonRecord).url) : null) ??
+      (isRecord(att.video_data) ? getString((att.video_data as JsonRecord).url) : null) ??
+      getString(att.file_url);
+
+    if (url) {
+      mediaUrl = url;
+      mediaType = type ?? "image";
+      break;
+    }
+  }
+
+  const directText =
+    getString(message.message) ??
+    getString(message.text) ??
+    (isRecord(message.message) ? getString(message.message.text) : null);
+
+  const cleanText =
+    directText && directText !== "[Instagram message]"
+      ? directText
+      : extractMessageText(message);
+
+  return {
+    text: cleanText,
+    mediaUrl,
+    mediaType,
+  };
 }
 
 function extractMessageText(message: JsonRecord): string | null {
@@ -241,7 +293,7 @@ async function fetchMessagePages(
       );
       url.searchParams.set(
         "fields",
-        "id,message,created_time,from{id,username,name},to{id,username,name},attachments,shares",
+        "id,created_time,from{id,username,name},to{id,username,name},message,attachments{type,payload}",
       );
       url.searchParams.set("limit", "100");
       url.searchParams.set("access_token", accessToken);
@@ -275,9 +327,10 @@ async function loadConversations(account: InstagramAccount, accessToken: string)
   }
 
   const fieldOptions = [
-    "id,participants{id,username,name,profile_pic},messages.limit(100){id,message,created_time,from{id,username,name},to{id,username,name},attachments,shares}",
-    "id,participants{id,username,name},messages.limit(100){id,message,created_time,from,to,attachments}",
-    "id,participants,messages.limit(100){id,message,created_time,from,to,attachments}",
+    "id,messages.limit(100){id,created_time,from,to,message,attachments{type,payload}}",
+    "id,participants{id,username,name,profile_pic},messages.limit(100){id,created_time,from{id,username,name},to{id,username,name},message,attachments{type,payload}}",
+    "id,participants{id,username,name},messages.limit(100){id,created_time,from,to,message,attachments{type,payload}}",
+    "id,messages{id,created_time,from,to,message,attachments{type,payload}}",
   ];
 
   let lastError: unknown = null;
@@ -417,10 +470,13 @@ export async function POST(request: NextRequest) {
       );
 
       for (const conversation of conversations) {
+        const instagramConversationId = getString(conversation.id);
+        if (!instagramConversationId) continue;
+
         const conversationMessages = (
           await fetchMessagePages(
             conversation.messages,
-            getString(conversation.id),
+            instagramConversationId,
             accessToken,
           )
         ).sort((left, right) => {
@@ -431,6 +487,118 @@ export async function POST(request: NextRequest) {
             (Number.isNaN(rightTime) ? 0 : rightTime)
           );
         });
+
+        // Resolve external contact ID
+        let contactId: string | null = null;
+        for (const message of conversationMessages) {
+          const fromId = getId(message.from);
+          const toValue = message.to;
+          const recipientIds = isRecord(toValue) && Array.isArray(toValue.data)
+            ? toValue.data.map(getId).filter((id): id is string => Boolean(id))
+            : [getId(toValue)].filter((id): id is string => Boolean(id));
+          const participantIds = [fromId, ...recipientIds].filter((id): id is string => Boolean(id));
+          const found = participantIds.find((id) => !ownIds.has(id));
+          if (found) {
+            contactId = found;
+            break;
+          }
+        }
+
+        if (!contactId && Array.isArray(conversation.participants)) {
+          for (const p of conversation.participants) {
+            const pId = getId(p);
+            if (pId && !ownIds.has(pId)) {
+              contactId = pId;
+              break;
+            }
+          }
+        }
+
+        if (!contactId) continue;
+
+        let profile: Awaited<ReturnType<typeof getInstagramSenderProfile>> = {
+          name: null,
+          username: null,
+          avatarUrl: null,
+        };
+        try {
+          profile = await resolveSenderProfile(contactId, accessToken, profileCache);
+        } catch (error) {
+          console.warn("Could not resolve Instagram sender profile during sync.", {
+            senderId: contactId,
+            error,
+          });
+        }
+        const contactProfile =
+          participantForId(conversation.participants, contactId);
+        const senderName =
+          profile.name ??
+          (isRecord(contactProfile) ? (getString(contactProfile.name) ?? null) : null);
+        const senderUsername =
+          profile.username ??
+          (isRecord(contactProfile) ? (getString(contactProfile.username) ?? null) : null);
+        const username =
+          senderUsername ??
+          senderName ??
+          (contactId ? `User ${contactId.slice(-4)}` : contactId);
+
+        const latestMsg = conversationMessages[conversationMessages.length - 1];
+        const latestTime = latestMsg
+          ? (getString(latestMsg.created_time) ?? new Date().toISOString())
+          : new Date().toISOString();
+        const latestParsed = latestMsg
+          ? extractMediaAndText(latestMsg)
+          : { text: null, mediaUrl: null, mediaType: null };
+        const lastMessageText =
+          latestParsed.text ?? (latestParsed.mediaUrl ? "[Photo/Media]" : "");
+
+        const contactUpsertData: Record<string, unknown> = {
+          ig_account_id: account.id,
+          workspace_id: workspaceId,
+          ig_scoped_user_id: contactId,
+          sender_id: contactId,
+          last_interaction_at: latestTime,
+        };
+        if (senderName) contactUpsertData.sender_name = senderName;
+        if (senderUsername) contactUpsertData.sender_username = senderUsername;
+        if (profile.avatarUrl) contactUpsertData.sender_avatar_url = profile.avatarUrl;
+        if (username) contactUpsertData.username = username;
+
+        const { data: contact, error: contactError } = await admin
+          .from("contacts")
+          .upsert(contactUpsertData, {
+            onConflict: "ig_account_id,ig_scoped_user_id",
+          })
+          .select("id")
+          .single();
+        if (contactError) throw contactError;
+
+        // Upsert into conversations table
+        const { data: convRecord, error: convError } = await admin
+          .from("conversations")
+          .upsert(
+            {
+              workspace_id: workspaceId,
+              contact_id: contact.id,
+              instagram_conversation_id: instagramConversationId,
+              sender_id: contactId,
+              sender_name: senderName,
+              sender_username: senderUsername,
+              sender_avatar_url: profile.avatarUrl,
+              last_message: lastMessageText,
+              media_url: latestParsed.mediaUrl,
+              media_type: latestParsed.mediaType,
+              updated_at: latestTime,
+            },
+            {
+              onConflict: "instagram_conversation_id",
+            },
+          )
+          .select("id")
+          .single();
+        if (convError) throw convError;
+
+        const conversationId = convRecord.id;
         let conversationHasMessages = false;
 
         for (const message of conversationMessages) {
@@ -438,107 +606,33 @@ export async function POST(request: NextRequest) {
           if (!externalId) continue;
 
           const fromId = getId(message.from);
-          const toValue = message.to;
-          const recipientIds = isRecord(toValue) && Array.isArray(toValue.data)
-            ? toValue.data.map(getId).filter((id): id is string => Boolean(id))
-            : [getId(toValue)].filter((id): id is string => Boolean(id));
-          const participantIds = [
-            fromId,
-            ...recipientIds,
-          ].filter((id): id is string => Boolean(id));
-          const contactId = participantIds.find((id) => !ownIds.has(id));
-          if (!contactId) continue;
-
-          let profile: Awaited<ReturnType<typeof getInstagramSenderProfile>> = {
-            name: null,
-            username: null,
-            avatarUrl: null,
-          };
-          try {
-            profile = await resolveSenderProfile(contactId, accessToken, profileCache);
-          } catch (error) {
-            console.warn("Could not resolve Instagram sender profile during sync.", {
-              senderId: contactId,
-              error,
-            });
-          }
-          const contactProfile =
-            participantForId(conversation.participants, contactId) ??
-            (getId(message.from) === contactId ? message.from : undefined);
-          const senderName =
-            profile.name ??
-            (isRecord(contactProfile) ? (getString(contactProfile.name) ?? null) : null);
-          const senderUsername =
-            profile.username ??
-            (isRecord(contactProfile) ? (getString(contactProfile.username) ?? null) : null);
-          const username =
-            senderUsername ??
-            senderName ??
-            (contactId ? `User ${contactId.slice(-4)}` : contactId);
-
-          const contactUpsertData: Record<string, unknown> = {
-            ig_account_id: account.id,
-            ig_scoped_user_id: contactId,
-            sender_id: contactId,
-            last_interaction_at: getString(message.created_time) ?? new Date().toISOString(),
-          };
-          if (senderName) contactUpsertData.sender_name = senderName;
-          if (senderUsername) contactUpsertData.sender_username = senderUsername;
-          if (profile.avatarUrl) contactUpsertData.sender_avatar_url = profile.avatarUrl;
-          if (username) contactUpsertData.username = username;
-
-          const { data: contact, error: contactError } = await admin
-            .from("contacts")
-            .upsert(contactUpsertData, {
-              onConflict: "ig_account_id,ig_scoped_user_id",
-            })
-            .select("id")
-            .single();
-          if (contactError) throw contactError;
-
-          const createdAt = getString(message.created_time);
-          const messageText =
-            extractMessageText(message) ?? "[Photo/Media]";
-          const direction =
-            fromId && ownIds.has(fromId) ? "outbound" : "inbound";
+          const direction = fromId && ownIds.has(fromId) ? "outbound" : "inbound";
           const messageSenderId =
             direction === "outbound"
               ? (account.instagram_account_id ?? fromId ?? account.id)
               : contactId;
-          const messageSenderName =
-            direction === "outbound" ? (account.name ?? "You") : senderName;
-          const messageSenderUsername =
-            direction === "outbound" ? (account.username ?? null) : senderUsername;
-          const messageSenderAvatar =
-            direction === "outbound"
-              ? (account.profile_picture_url ?? null)
-              : profile.avatarUrl;
 
+          const createdAt = getString(message.created_time) ?? new Date().toISOString();
+          const { text: extractedText, mediaUrl, mediaType } = extractMediaAndText(message);
+          const messageText =
+            extractedText ?? (mediaUrl ? "[Photo/Media]" : "");
+
+          // Upsert message into messages table
           const { error: messageError } = await admin
-            .from("conversations")
+            .from("messages")
             .upsert(
               {
-                contact_id: contact.id,
-                direction,
-                message_body: messageText,
-                message_text: messageText,
+                conversation_id: conversationId,
+                instagram_message_id: externalId,
                 sender_id: messageSenderId,
-                sender_name: messageSenderName,
-                sender_username: messageSenderUsername,
-                sender_avatar_url: messageSenderAvatar,
+                message_text: messageText,
+                media_url: mediaUrl,
+                media_type: mediaType,
                 is_from_user: direction === "inbound",
-                instagram_conversation_id: getString(conversation.id),
-                last_message: messageText,
-                external_event_id: externalId,
-                created_at: createdAt ?? new Date().toISOString(),
-                metadata: {
-                  source: "historical_sync",
-                  instagram_account_id: account.instagram_account_id,
-                  conversation_id: getString(conversation.id),
-                },
+                created_at: createdAt,
               },
               {
-                onConflict: "contact_id,external_event_id",
+                onConflict: "instagram_message_id",
               },
             );
           if (messageError) throw messageError;

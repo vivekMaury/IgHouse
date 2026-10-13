@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
         },
         created_at: sentAt,
       })
-      .select("id, contact_id, direction, message_body, message_text, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, created_at")
+      .select("id, contact_id, direction, message_body, message_text, media_url, media_type, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, created_at")
       .single();
 
     if (saveError) {
@@ -133,6 +133,28 @@ export async function POST(request: NextRequest) {
         { error: "Instagram accepted the message, but it could not be saved in inbox history. Refresh before retrying." },
         { status: 502 },
       );
+    }
+
+    // Mirror to messages table if conversation exists
+    try {
+      const { data: conv } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("contact_id", contact.id)
+        .maybeSingle();
+
+      if (conv?.id) {
+        await supabase.from("messages").insert({
+          conversation_id: conv.id,
+          instagram_message_id: externalMessageId,
+          sender_id: account.instagram_account_id,
+          message_text: messageText,
+          is_from_user: false,
+          created_at: sentAt,
+        });
+      }
+    } catch {
+      // Non-blocking
     }
 
     return NextResponse.json({

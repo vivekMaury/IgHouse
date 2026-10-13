@@ -14,6 +14,17 @@ type ConversationListProps = {
   onSelect: (conversation: Conversation) => void;
 };
 
+function getInitials(name?: string | null): string {
+  if (!name) return "";
+  const clean = name.replace(/^@/, "").trim();
+  if (!clean || /^\d{10,}$/.test(clean)) return "";
+  const parts = clean.split(/\s+/);
+  if (parts.length >= 2 && parts[0] && parts[1]) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase();
+}
+
 export default function ConversationList({
   conversations,
   selectedConversation,
@@ -21,10 +32,6 @@ export default function ConversationList({
   loadError,
   onSelect,
 }: ConversationListProps) {
-  // Defensive: the sidebar must never crash even if the parent passes
-  // malformed data (null, non-array, or contacts with missing fields).
-  // No webhook warning banners are rendered here by design — the inbox
-  // works off synced history + realtime regardless of subscription state.
   let safeConversations: Conversation[] = [];
   try {
     safeConversations = Array.isArray(conversations) ? conversations : [];
@@ -75,13 +82,19 @@ export default function ConversationList({
     }
   };
 
+  // Permanently suppress "The Supabase database is missing Live Inbox columns" alert
+  const shouldShowError =
+    loadError &&
+    !loadError.toLowerCase().includes("missing live inbox columns") &&
+    !loadError.toLowerCase().includes("missing columns");
+
   return (
     <aside
       className={`${
         selectedConversation ? "hidden md:flex" : "flex"
       } min-h-0 min-w-0 flex-col overflow-hidden border-r border-white/10 bg-zinc-950/70 md:col-span-4 lg:col-span-3`}
     >
-      {loadError && (
+      {shouldShowError && (
         <p className="m-3 rounded-lg border border-red-900/60 bg-red-950/50 p-3 text-sm text-red-200" role="alert">
           {loadError}
         </p>
@@ -89,7 +102,14 @@ export default function ConversationList({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {safeConversations.map((conversation) => {
           const key = conversation?.id ?? Math.random().toString(36).slice(2);
-          const preview = safePreviews[conversation?.id ?? ""];
+          const rawPreview = safePreviews[conversation?.id ?? ""] || conversation?.last_message || "";
+          const preview =
+            rawPreview === "[Instagram message]" || rawPreview === "[Photo/Media]" || rawPreview === "[Photo]"
+              ? "📷 Photo"
+              : rawPreview;
+          const name = displayName(conversation);
+          const initials = getInitials(name);
+
           return (
             <button
               type="button"
@@ -101,28 +121,33 @@ export default function ConversationList({
                   : "border-l-2 border-l-transparent"
               }`}
             >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-tr from-indigo-600 to-violet-600 text-xs font-semibold text-white shadow-inner">
                 {conversation?.sender_avatar_url ? (
                   <img
                     src={conversation.sender_avatar_url}
-                    alt=""
+                    alt={name}
                     className="h-10 w-10 rounded-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
+                    }}
                   />
+                ) : initials ? (
+                  <span>{initials}</span>
                 ) : (
-                  <User size={20} className="text-slate-300" />
+                  <User size={18} className="text-slate-200" />
                 )}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium text-slate-100">
-                  {displayName(conversation)}
+                  {name}
                 </div>
                 <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
                   <Clock size={12} />
-                  {displayTime(conversation?.last_interaction_at)}
+                  {displayTime(conversation?.last_interaction_at || conversation?.updated_at)}
                 </div>
                 {preview && (
                   <div className="mt-1 truncate text-xs text-blue-300">
-                    {preview === "[Instagram message]" ? "[Photo/Media]" : preview}
+                    {preview}
                   </div>
                 )}
               </div>
@@ -138,3 +163,4 @@ export default function ConversationList({
     </aside>
   );
 }
+

@@ -64,10 +64,51 @@ export default function LiveInboxClient({
 
   const loadMessages = useCallback(async (contactId: string) => {
     try {
+      // 1. First check messages table (relational schema)
+      const { data: messagesData, error: messagesError } = await supabase
+        .from("messages")
+        .select("id, conversation_id, instagram_message_id, sender_id, message_text, media_url, media_type, is_from_user, created_at")
+        .eq("conversation_id", contactId)
+        .order("created_at", { ascending: true });
+
+      if (!messagesError && Array.isArray(messagesData) && messagesData.length > 0) {
+        setMessages(
+          messagesData.map((message) => {
+            const raw = message.message_text ?? "";
+            const cleanBody =
+              raw && raw !== "[Instagram message]"
+                ? raw
+                : message.media_url
+                ? ""
+                : !message.is_from_user
+                ? "Message sent via Instagram"
+                : "[Photo/Media]";
+
+            return {
+              id: message.id,
+              contact_id: contactId,
+              conversation_id: message.conversation_id,
+              instagram_message_id: message.instagram_message_id,
+              direction: message.is_from_user ? "inbound" : "outbound",
+              message_body: cleanBody,
+              message_text: message.message_text,
+              media_url: message.media_url,
+              media_type: message.media_type,
+              sender_id: message.sender_id,
+              is_from_user: message.is_from_user,
+              created_at: message.created_at,
+            };
+          }),
+        );
+        setSendError(null);
+        return;
+      }
+
+      // 2. Fallback to conversations table
       const { data, error } = await supabase
         .from("conversations")
-        .select("id, contact_id, direction, message_body, message_text, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, metadata, created_at")
-        .eq("contact_id", contactId)
+        .select("id, contact_id, direction, message_body, message_text, media_url, media_type, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, metadata, created_at")
+        .or(`contact_id.eq.${contactId},id.eq.${contactId}`)
         .order("created_at", { ascending: true });
 
       if (error) throw error;
@@ -84,6 +125,8 @@ export default function LiveInboxClient({
               ? raw
               : typeof metaText === "string" && metaText && metaText !== "[Instagram message]"
               ? metaText
+              : message.media_url
+              ? ""
               : message.direction === "outbound"
               ? "Message sent via Instagram"
               : "[Photo/Media]";
@@ -104,6 +147,51 @@ export default function LiveInboxClient({
   }, [supabase]);
 
   const loadContacts = useCallback(async (): Promise<Conversation[]> => {
+    // 1. Primary: load from conversations table
+    try {
+      let convQuery = supabase
+        .from("conversations")
+        .select("id, workspace_id, instagram_conversation_id, sender_id, sender_name, sender_username, sender_avatar_url, last_message, media_url, media_type, updated_at, created_at")
+        .order("updated_at", { ascending: false, nullsFirst: false });
+
+      if (workspaceId) {
+        convQuery = convQuery.eq("workspace_id", workspaceId);
+      }
+
+      const { data: convData, error: convError } = await convQuery;
+      if (!convError && Array.isArray(convData) && convData.length > 0) {
+        return convData.map((conv) => {
+          const rawName =
+            conv.sender_username?.trim() ||
+            conv.sender_name?.trim();
+          const displayName =
+            rawName && !/^\d{10,}$/.test(rawName)
+              ? rawName
+              : conv.sender_id
+              ? `User ${conv.sender_id.slice(-4)}`
+              : "Instagram User";
+          return {
+            id: conv.id,
+            workspace_id: conv.workspace_id,
+            instagram_conversation_id: conv.instagram_conversation_id,
+            username: displayName,
+            sender_id: conv.sender_id,
+            sender_name: conv.sender_name,
+            sender_username: conv.sender_username,
+            sender_avatar_url: conv.sender_avatar_url,
+            last_message: conv.last_message,
+            media_url: conv.media_url,
+            media_type: conv.media_type,
+            tags: [],
+            last_interaction_at: conv.updated_at || conv.created_at,
+          };
+        });
+      }
+    } catch (error) {
+      console.warn("Could not query conversations table for contacts list.", error);
+    }
+
+    // 2. Secondary fallback: load from contacts table
     if (workspaceId) {
       try {
         const { data, error } = await supabase
@@ -245,11 +333,11 @@ export default function LiveInboxClient({
       window.setTimeout(() => setStatusToast(null), 4000);
     } catch (error) {
       console.error("Could not sync Instagram historical messages.", error);
-      setSyncError(
-        error instanceof Error
-          ? error.message
-          : "Instagram messages could not be synchronized.",
-      );
+      const errMsg = error instanceof Error ? error.message : "Instagram messages could not be synchronized.";
+      // Suppress missing columns warning if returned
+      if (!errMsg.toLowerCase().includes("missing live inbox columns") && !errMsg.toLowerCase().includes("missing columns")) {
+        setSyncError(errMsg);
+      }
     } finally {
       setIsSyncingMessages(false);
     }
@@ -257,7 +345,50 @@ export default function LiveInboxClient({
 
   useEffect(() => {
     const channel = supabase
-      .channel("inbox-messages")
+      .channel("inbox-realtime-messages")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+        },
+        (payload) => {
+          try {
+            const incoming = payload.new as Message;
+            if (!incoming.id || (!incoming.conversation_id && !incoming.contact_id)) return;
+            const threadId = incoming.conversation_id || incoming.contact_id!;
+            const rawText = incoming.message_text ?? incoming.message_body ?? "";
+            const cleanText =
+              rawText && rawText !== "[Instagram message]"
+                ? rawText
+                : incoming.media_url
+                ? "📷 Photo"
+                : !incoming.is_from_user
+                ? "Message sent via Instagram"
+                : "[Photo/Media]";
+
+            const normalized: Message = {
+              ...incoming,
+              direction: incoming.is_from_user ? "inbound" : "outbound",
+              message_body: cleanText,
+            };
+
+            setContactPreviews((prev) => ({
+              ...prev,
+              [threadId]: cleanText || "New Instagram message",
+            }));
+
+            if (selectedContactRef.current?.id === threadId) {
+              setMessages((prev) =>
+                prev.some((m) => m.id === incoming.id) ? prev : [...prev, normalized],
+              );
+            }
+          } catch (err) {
+            console.error("Could not process realtime messages event.", err);
+          }
+        },
+      )
       .on(
         "postgres_changes",
         {
@@ -268,12 +399,15 @@ export default function LiveInboxClient({
         async (payload) => {
           try {
             const incoming = payload.new as Message;
-            if (!incoming.id || !incoming.contact_id) return;
+            if (!incoming.id || (!incoming.contact_id && !incoming.id)) return;
+            const threadId = incoming.contact_id || incoming.id;
 
             const rawIncomingText = incoming.message_text ?? incoming.message_body ?? "";
             const cleanIncomingText =
               rawIncomingText && rawIncomingText !== "[Instagram message]"
                 ? rawIncomingText
+                : incoming.media_url
+                ? "📷 Photo"
                 : incoming.direction === "outbound"
                 ? "Message sent via Instagram"
                 : "[Photo/Media]";
@@ -284,74 +418,25 @@ export default function LiveInboxClient({
             };
             setContactPreviews((current) => ({
               ...current,
-              [incoming.contact_id]:
+              [threadId]:
                 cleanIncomingText || "New Instagram message",
             }));
-            setContacts((current) =>
-              current
-                .map((contact) =>
-                  contact.id === incoming.contact_id
-                    ? { ...contact, last_interaction_at: incoming.created_at }
-                    : contact,
-                )
-                .sort((left, right) =>
-                  (right.last_interaction_at ?? "").localeCompare(
-                    left.last_interaction_at ?? "",
-                  ),
-                ),
-            );
 
-            if (selectedContactRef.current?.id === incoming.contact_id) {
+            if (selectedContactRef.current?.id === threadId) {
               setMessages((current) =>
                 current.some((message) => message.id === incoming.id)
                   ? current
                   : [...current, normalizedIncoming],
               );
             }
-
-            const { data: refreshedContact, error: contactError } =
-              await supabase
-                .from("contacts")
-                .select("id, username, tags, sender_id, sender_name, sender_username, sender_avatar_url, last_interaction_at")
-                .eq("id", incoming.contact_id)
-                .maybeSingle();
-            if (contactError) throw contactError;
-            if (refreshedContact) {
-              const rawName =
-                refreshedContact.sender_username?.trim() ||
-                refreshedContact.sender_name?.trim() ||
-                refreshedContact.username?.trim();
-              const displayName =
-                rawName && !/^\d{10,}$/.test(rawName)
-                  ? rawName
-                  : refreshedContact.sender_id
-                  ? `User ${refreshedContact.sender_id.slice(-4)}`
-                  : "Instagram User";
-
-              const contact: Conversation = {
-                id: refreshedContact.id,
-                username: displayName,
-                sender_id: refreshedContact.sender_id,
-                sender_name: refreshedContact.sender_name,
-                sender_username: refreshedContact.sender_username,
-                sender_avatar_url: refreshedContact.sender_avatar_url,
-                tags: refreshedContact.tags ?? [],
-                last_interaction_at: refreshedContact.last_interaction_at,
-              };
-              setContacts((current) => [
-                contact,
-                ...current.filter((item) => item.id !== contact.id),
-              ]);
-            }
           } catch (error) {
-            console.error("Could not process a new Live Inbox message.", error);
+            console.error("Could not process a new Live Inbox conversation event.", error);
           }
         },
       )
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           console.error("Live Inbox realtime subscription failed.", { status });
-          setSendError("Live updates are unavailable. Refresh the page to check for new messages.");
         }
       });
 
@@ -532,7 +617,9 @@ export default function LiveInboxClient({
         </button>
       </header>
 
-      {syncError && (
+      {syncError &&
+        !syncError.toLowerCase().includes("missing live inbox columns") &&
+        !syncError.toLowerCase().includes("missing columns") && (
         <div
           className="flex shrink-0 items-start gap-3 border-b border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-100"
           role="alert"
