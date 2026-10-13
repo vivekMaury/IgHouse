@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { Message } from "@/types/inbox";
 import {
   decryptPageAccessToken,
   encryptPageAccessToken,
