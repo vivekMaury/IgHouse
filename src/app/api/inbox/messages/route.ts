@@ -17,6 +17,99 @@ type SendMessageBody = {
   message?: unknown;
 };
 
+export async function GET(request: NextRequest) {
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json({ error: "Please sign in to view messages." }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const conversationIdParam =
+    searchParams.get("conversationId") ||
+    searchParams.get("conversation_id") ||
+    searchParams.get("contactId") ||
+    searchParams.get("contact_id");
+
+  if (!conversationIdParam) {
+    return NextResponse.json(
+      { error: "conversationId query parameter is required." },
+      { status: 400 },
+    );
+  }
+
+  try {
+    // 1. Ensure conversation ID being passed matches the UUID primary key of the conversations table
+    let resolvedConversationId = conversationIdParam;
+
+    const { data: convRecord, error: convError } = await supabase
+      .from("conversations")
+      .select("id")
+      .or(`id.eq.${conversationIdParam},contact_id.eq.${conversationIdParam}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (convError) {
+      console.error("Supabase conversation lookup error in API route:", {
+        message: convError.message,
+        details: convError.details,
+        hint: convError.hint,
+        code: convError.code,
+        conversationIdParam,
+      });
+    } else if (convRecord?.id) {
+      resolvedConversationId = convRecord.id;
+    }
+
+    // 2. Fetch messages using the correct table name `messages` and foreign key `conversation_id`
+    const { data: messages, error: messagesError } = await supabase
+      .from("messages")
+      .select("id, conversation_id, instagram_message_id, sender_id, message_text, media_url, media_type, is_from_user, created_at")
+      .eq("conversation_id", resolvedConversationId)
+      .order("created_at", { ascending: true });
+
+    if (messagesError) {
+      console.error("Supabase messages query error in API route:", {
+        message: messagesError.message,
+        details: messagesError.details,
+        hint: messagesError.hint,
+        code: messagesError.code,
+        conversation_id: resolvedConversationId,
+      });
+      return NextResponse.json(
+        {
+          error: messagesError.message,
+          details: messagesError.details,
+          code: messagesError.code,
+        },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      conversation_id: resolvedConversationId,
+      messages: messages ?? [],
+    });
+  } catch (error) {
+    console.error("Unexpected error in messages GET API route:", {
+      error,
+      message: error instanceof Error ? error.message : String(error),
+      conversationId: conversationIdParam,
+    });
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to fetch messages.",
+      },
+      { status: 500 },
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   const supabase = createClient();
   const {

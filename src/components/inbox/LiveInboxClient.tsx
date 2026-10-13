@@ -62,16 +62,53 @@ export default function LiveInboxClient({
     return () => media.removeEventListener("change", selectInitialContact);
   }, [initialContacts]);
 
-  const loadMessages = useCallback(async (contactId: string) => {
+  const loadMessages = useCallback(async (conversationIdOrContactId: string) => {
+    if (!conversationIdOrContactId) return;
+
     try {
-      // 1. First check messages table (relational schema)
+      // 1. Ensure the conversation ID being passed matches the UUID primary key of the conversations table
+      let resolvedConversationId = conversationIdOrContactId;
+
+      // Check if conversationIdOrContactId needs resolution (e.g. was a legacy contact_id)
+      const { data: convRecord, error: convLookupError } = await supabase
+        .from("conversations")
+        .select("id")
+        .or(`id.eq.${conversationIdOrContactId},contact_id.eq.${conversationIdOrContactId}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (convLookupError) {
+        console.error("Supabase conversation lookup error in LiveInboxClient:", {
+          message: convLookupError.message,
+          details: convLookupError.details,
+          hint: convLookupError.hint,
+          code: convLookupError.code,
+          input: conversationIdOrContactId,
+        });
+      } else if (convRecord?.id) {
+        resolvedConversationId = convRecord.id;
+      }
+
+      // 2. Fetch messages using the correct table name `messages` and foreign key `conversation_id`
       const { data: messagesData, error: messagesError } = await supabase
         .from("messages")
         .select("id, conversation_id, instagram_message_id, sender_id, message_text, media_url, media_type, is_from_user, created_at")
-        .eq("conversation_id", contactId)
+        .eq("conversation_id", resolvedConversationId)
         .order("created_at", { ascending: true });
 
-      if (!messagesError && Array.isArray(messagesData) && messagesData.length > 0) {
+      if (messagesError) {
+        console.error("Supabase messages query error in LiveInboxClient:", {
+          message: messagesError.message,
+          details: messagesError.details,
+          hint: messagesError.hint,
+          code: messagesError.code,
+          conversation_id: resolvedConversationId,
+        });
+        setMessages([]);
+        return;
+      }
+
+      if (Array.isArray(messagesData) && messagesData.length > 0) {
         setMessages(
           messagesData.map((message) => {
             const raw = message.message_text ?? "";
@@ -86,7 +123,7 @@ export default function LiveInboxClient({
 
             return {
               id: message.id,
-              contact_id: contactId,
+              contact_id: resolvedConversationId,
               conversation_id: message.conversation_id,
               instagram_message_id: message.instagram_message_id,
               direction: message.is_from_user ? "inbound" : "outbound",
@@ -104,45 +141,63 @@ export default function LiveInboxClient({
         return;
       }
 
-      // 2. Fallback to conversations table
-      const { data, error } = await supabase
+      // 3. Fallback for conversations table (seamless backward compatibility)
+      const { data: fallbackData, error: fallbackError } = await supabase
         .from("conversations")
         .select("id, contact_id, direction, message_body, message_text, media_url, media_type, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, metadata, created_at")
-        .or(`contact_id.eq.${contactId},id.eq.${contactId}`)
+        .or(`contact_id.eq.${resolvedConversationId},id.eq.${resolvedConversationId}`)
         .order("created_at", { ascending: true });
 
-      if (error) throw error;
-      setMessages(
-        (data ?? []).map((message) => {
-          const raw = message.message_text ?? message.message_body ?? "";
-          const metaText =
-            message.metadata && typeof message.metadata === "object"
-              ? (message.metadata as Record<string, unknown>).text ??
-                (message.metadata as Record<string, unknown>).raw_message
-              : null;
-          const cleanBody =
-            raw && raw !== "[Instagram message]"
-              ? raw
-              : typeof metaText === "string" && metaText && metaText !== "[Instagram message]"
-              ? metaText
-              : message.media_url
-              ? ""
-              : message.direction === "outbound"
-              ? "Message sent via Instagram"
-              : "[Photo/Media]";
+      if (fallbackError) {
+        console.error("Supabase legacy conversation query error in LiveInboxClient:", {
+          message: fallbackError.message,
+          details: fallbackError.details,
+          hint: fallbackError.hint,
+          code: fallbackError.code,
+          conversation_id: resolvedConversationId,
+        });
+        setMessages([]);
+        return;
+      }
 
-          return {
-            ...message,
-            direction: message.direction === "outbound" ? "outbound" : "inbound",
-            message_body: cleanBody,
-          };
-        }),
-      );
+      if (Array.isArray(fallbackData) && fallbackData.length > 0) {
+        setMessages(
+          fallbackData.map((message) => {
+            const raw = message.message_text ?? message.message_body ?? "";
+            const metaText =
+              message.metadata && typeof message.metadata === "object"
+                ? (message.metadata as Record<string, unknown>).text ??
+                  (message.metadata as Record<string, unknown>).raw_message
+                : null;
+            const cleanBody =
+              raw && raw !== "[Instagram message]"
+                ? raw
+                : typeof metaText === "string" && metaText && metaText !== "[Instagram message]"
+                ? metaText
+                : message.media_url
+                ? ""
+                : message.direction === "outbound"
+                ? "Message sent via Instagram"
+                : "[Photo/Media]";
+
+            return {
+              ...message,
+              direction: message.direction === "outbound" ? "outbound" : "inbound",
+              message_body: cleanBody,
+            };
+          }),
+        );
+      } else {
+        setMessages([]);
+      }
       setSendError(null);
     } catch (error) {
-      console.error("Live Inbox conversation refresh failed.", error);
+      console.error("Unexpected error loading messages for conversation in LiveInboxClient:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        conversationId: conversationIdOrContactId,
+      });
       setMessages([]);
-      setSendError("Could not refresh this conversation. Please try again.");
     }
   }, [supabase]);
 
