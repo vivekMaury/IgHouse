@@ -92,7 +92,7 @@ export default function LiveInboxClient({
       // 2. Fetch messages using the correct table name `messages` and foreign key `conversation_id`
       const { data: messagesData, error: messagesError } = await supabase
         .from("messages")
-        .select("id, conversation_id, instagram_message_id, sender_id, message_text, media_url, media_type, is_from_user, created_at")
+        .select("*")
         .eq("conversation_id", resolvedConversationId)
         .order("created_at", { ascending: true });
 
@@ -112,21 +112,29 @@ export default function LiveInboxClient({
         setMessages(
           messagesData.map((message) => {
             const raw = message.message_text ?? "";
-            const cleanBody =
-              raw && raw !== "[Instagram message]"
-                ? raw
-                : message.media_url
-                ? ""
-                : !message.is_from_user
-                ? "Message sent via Instagram"
-                : "[Photo/Media]";
+            const isBlankOrPlaceholder =
+              !raw ||
+              raw === "[Instagram message]" ||
+              raw === "[Photo/Media]" ||
+              raw === "[Photo]" ||
+              raw === "[Media]" ||
+              raw === "[Video]" ||
+              raw === "[Sticker]";
+
+            const cleanBody = !isBlankOrPlaceholder
+              ? raw
+              : message.media_url
+              ? ""
+              : message.is_from_user
+              ? "Message sent via Instagram"
+              : "[Photo/Media]";
 
             return {
               id: message.id,
               contact_id: resolvedConversationId,
               conversation_id: message.conversation_id,
               instagram_message_id: message.instagram_message_id,
-              direction: message.is_from_user ? "inbound" : "outbound",
+              direction: message.is_from_user ? "outbound" : "inbound",
               message_body: cleanBody,
               message_text: message.message_text,
               media_url: message.media_url,
@@ -389,7 +397,6 @@ export default function LiveInboxClient({
     } catch (error) {
       console.error("Could not sync Instagram historical messages.", error);
       const errMsg = error instanceof Error ? error.message : "Instagram messages could not be synchronized.";
-      // Suppress missing columns warning if returned
       if (!errMsg.toLowerCase().includes("missing live inbox columns") && !errMsg.toLowerCase().includes("missing columns")) {
         setSyncError(errMsg);
       }
@@ -425,7 +432,7 @@ export default function LiveInboxClient({
 
             const normalized: Message = {
               ...incoming,
-              direction: incoming.is_from_user ? "inbound" : "outbound",
+              direction: incoming.is_from_user ? "outbound" : "inbound",
               message_body: cleanText,
             };
 
@@ -599,36 +606,87 @@ export default function LiveInboxClient({
     };
   }, [supabase]);
 
+  const onSendMessageSuccess = useCallback(async (conversationId: string) => {
+    try {
+      await loadMessages(conversationId);
+      const refreshedContacts = await loadContacts();
+      setContacts(refreshedContacts);
+    } catch (err) {
+      console.error("Error in onSendMessageSuccess handler:", err);
+    }
+  }, [loadMessages, loadContacts]);
+
   const handleSend = async () => {
     const messageText = replyText.trim();
     if (!messageText || !selectedContact || isSending) return;
 
+    const activeConversationId = selectedContact.id;
+    const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const nowIso = new Date().toISOString();
+
+    const optimisticMessage: Message = {
+      id: optimisticId,
+      conversation_id: activeConversationId,
+      contact_id: activeConversationId,
+      direction: "outbound",
+      message_body: messageText,
+      message_text: messageText,
+      is_from_user: true,
+      created_at: nowIso,
+    };
+
+    // 1. Optimistic UI update: Immediately append to local messages array
+    setMessages((prev) => [...prev, optimisticMessage]);
+    setReplyText("");
     setIsSending(true);
     setSendError(null);
+
+    // Update conversation sidebar preview immediately
+    setContactPreviews((prev) => ({
+      ...prev,
+      [activeConversationId]: messageText,
+    }));
+
     try {
-      const response = await fetch("/api/messages/send", {
+      const response = await fetch("/api/instagram/send-message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contactId: selectedContact.id,
+          conversationId: activeConversationId,
+          contactId: activeConversationId,
           message: messageText,
         }),
       });
-      const result = (await response.json()) as SendMessageResponse;
+
+      let result: SendMessageResponse;
+      try {
+        result = (await response.json()) as SendMessageResponse;
+      } catch {
+        throw new Error(`Invalid server response (HTTP ${response.status})`);
+      }
 
       const sentMessage = result.message;
       if (!response.ok || !sentMessage) {
         throw new Error(result.error ?? "Message could not be sent. Please try again.");
       }
 
-      setMessages((current) =>
-        current.some((message) => message.id === sentMessage.id)
-          ? current
-          : [...current, sentMessage],
+      // Reconcile optimistic message with persisted server message
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === optimisticId ? sentMessage : msg)),
       );
-      setReplyText("");
+
+      // 2. Explicit onSuccess state handler to trigger local re-fetching
+      await onSendMessageSuccess(activeConversationId);
     } catch (error) {
-      console.error("Live Inbox message send failed.", error);
+      console.error("Live Inbox message send failed:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        conversationId: activeConversationId,
+      });
+
+      // Remove optimistic message on failure and restore input
+      setMessages((prev) => prev.filter((msg) => msg.id !== optimisticId));
+      setReplyText(messageText);
       setSendError(
         error instanceof Error
           ? error.message

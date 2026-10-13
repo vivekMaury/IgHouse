@@ -163,12 +163,15 @@ export default function ChatView({
                   rawText === "[Video]" ||
                   rawText === "[Sticker]";
 
+                const isOutbound =
+                  message.direction === "outbound" || message.is_from_user === true;
+
                 const displayText =
                   !isPlaceholder
                     ? rawText
                     : message.media_url
                     ? null
-                    : message.direction === "outbound"
+                    : isOutbound
                     ? "Message sent via Instagram"
                     : "[Photo/Media]";
 
@@ -178,14 +181,14 @@ export default function ChatView({
                   <div
                     key={message.id}
                     className={`flex min-w-0 ${
-                      message.direction === "outbound"
+                      isOutbound
                         ? "justify-end"
                         : "justify-start"
                     }`}
                   >
                     <div
                       className={`max-w-[85%] break-words rounded-2xl p-2.5 text-sm shadow-sm sm:max-w-[70%] ${
-                        message.direction === "outbound"
+                        isOutbound
                           ? "rounded-br-sm bg-blue-600 text-white"
                           : "rounded-bl-sm border border-white/10 bg-zinc-900 text-slate-100"
                       }`}
