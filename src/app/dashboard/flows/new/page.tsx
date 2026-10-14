@@ -434,44 +434,54 @@ function NewFlowPageContent() {
     event.dataTransfer.effectAllowed = 'move';
   }, []);
 
-  const handleSave = useCallback(async () => {
-    if (!hasTriggerNode(nodes)) {
-      setToast({ type: 'error', message: 'Your flow must include at least one trigger node before saving.' });
-      return;
-    }
-
-    setIsSaving(true);
-
-    try {
-      const savedFlow = await saveWorkflow({
-        id: workflowId ?? undefined,
-        name: flowTitle.trim() || 'Untitled Workflow',
-        flowData: {
-          nodes,
-          edges,
-        },
-        status: isActive ? 'published' : 'draft',
-      });
-
-      const nextWorkflowId = typeof savedFlow?.id === 'string' ? savedFlow.id : workflowId;
-
-      if (!workflowId && nextWorkflowId) {
-        router.replace(`/dashboard/flows/new?id=${nextWorkflowId}`);
+  const handleSave = useCallback(
+    async (explicitStatus?: 'published' | 'draft') => {
+      if (!hasTriggerNode(nodes)) {
+        setToast({ type: 'error', message: 'Your flow must include at least one trigger node before saving.' });
+        return;
       }
 
-      setToast({
-        type: 'success',
-        message: isActive ? 'Flow saved and published successfully.' : 'Flow saved as draft.',
-      });
-    } catch (error: any) {
-      setToast({
-        type: 'error',
-        message: error?.message || 'Unable to save this flow.',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  }, [edges, flowTitle, isActive, nodes, router, workflowId]);
+      setIsSaving(true);
+
+      try {
+        // Clicking "Save & Publish" explicitly updates the flow to published / active
+        const targetStatus: 'published' | 'draft' = explicitStatus ?? 'published';
+        const willBeActive = targetStatus === 'published';
+
+        const savedFlow = await saveWorkflow({
+          id: workflowId ?? undefined,
+          name: flowTitle.trim() || 'Untitled Workflow',
+          flowData: {
+            nodes,
+            edges,
+          },
+          status: targetStatus,
+        });
+
+        // Explicitly update local active state so the UI badge immediately reflects Active
+        setIsActive(willBeActive);
+
+        const nextWorkflowId = typeof savedFlow?.id === 'string' ? savedFlow.id : workflowId;
+
+        if (!workflowId && nextWorkflowId) {
+          router.replace(`/dashboard/flows/new?id=${nextWorkflowId}`);
+        }
+
+        setToast({
+          type: 'success',
+          message: willBeActive ? 'Flow saved and published successfully.' : 'Flow saved as draft.',
+        });
+      } catch (error: any) {
+        setToast({
+          type: 'error',
+          message: error?.message || 'Unable to save this flow.',
+        });
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [edges, flowTitle, nodes, router, workflowId],
+  );
 
   const handleToggleActiveStatus = useCallback(async () => {
     const nextActiveState = !isActive;
@@ -552,7 +562,7 @@ function NewFlowPageContent() {
 
           <button
             type="button"
-            onClick={handleSave}
+            onClick={() => handleSave('published')}
             disabled={isSaving}
             className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-lg shadow-purple-500/20 transition-all hover:from-purple-500 hover:to-pink-500 disabled:cursor-not-allowed disabled:opacity-70 sm:gap-2 sm:px-4 sm:py-2 sm:text-sm"
           >
@@ -562,13 +572,13 @@ function NewFlowPageContent() {
         </div>
       </header>
 
-      <div className="relative flex flex-1 overflow-hidden">
+      <div className="relative flex flex-1 overflow-hidden min-h-0">
         <aside
           className={`hidden border-r border-white/10 bg-[#09090b]/90 p-4 md:flex md:flex-col ${
             isPaletteCollapsed ? 'w-16' : 'w-[286px]'
-          } transition-all duration-200`}
+          } transition-all duration-200 h-full min-h-0 overflow-hidden`}
         >
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex items-center justify-between flex-shrink-0">
             {!isPaletteCollapsed && (
               <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-400">
                 Palette
@@ -590,7 +600,7 @@ function NewFlowPageContent() {
           </div>
 
           {!isPaletteCollapsed && (
-            <div className="space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto max-h-full pr-1.5 space-y-3 custom-scrollbar">
               {paletteItems.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -616,9 +626,11 @@ function NewFlowPageContent() {
         </aside>
 
         {isPaletteOpen && (
-          <div className="absolute inset-x-0 bottom-0 z-20 rounded-t-3xl border-t border-white/10 bg-[#09090b]/95 p-4 shadow-2xl backdrop-blur-xl md:hidden">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-400">Palette</h2>
+          <div className="absolute inset-x-0 bottom-0 z-20 flex max-h-[80vh] flex-col rounded-t-3xl border-t border-white/10 bg-[#09090b]/95 p-4 shadow-2xl backdrop-blur-xl md:hidden">
+            <div className="mb-4 flex flex-shrink-0 items-center justify-between">
+              <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Palette ({paletteItems.length} Nodes)
+              </h2>
               <button
                 type="button"
                 onClick={() => setIsPaletteOpen(false)}
@@ -629,7 +641,7 @@ function NewFlowPageContent() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3 custom-scrollbar sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0">
               {paletteItems.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -655,7 +667,7 @@ function NewFlowPageContent() {
           </div>
         )}
 
-        <div className="relative flex-1 overflow-hidden">
+        <div className="relative flex-1 overflow-hidden min-h-0">
           {toast && (
             <div
               className={`absolute left-4 top-4 z-20 max-w-sm rounded-xl border px-3 py-2 text-sm shadow-lg backdrop-blur-md ${
@@ -680,7 +692,8 @@ function NewFlowPageContent() {
                 fitView
                 fitViewOptions={{ padding: 0.3 }}
                 nodeTypes={nodeTypes as any}
-                className="bg-[#030712]"
+                colorMode="dark"
+                className="dark bg-[#030712]"
                 defaultEdgeOptions={{
                   type: 'smoothstep',
                   animated: true,
@@ -702,13 +715,15 @@ function NewFlowPageContent() {
                       message: '#38bdf8',
                       condition: '#f59e0b',
                       delay: '#fb7185',
+                      lead_capture: '#10b981',
                     };
                     return scheme[node.type as keyof typeof scheme] ?? '#8b5cf6';
                   }}
-                  className="!bg-slate-900/80 !border !border-white/10 !rounded-xl"
+                  maskColor="rgba(3, 7, 18, 0.75)"
+                  className="!bg-[#121216] !border !border-white/10 !rounded-xl shadow-2xl"
                 />
                 <Controls
-                  className="!bg-slate-900/80 !border !border-slate-700 !rounded-xl !text-white"
+                  className="!bg-[#1e1e24] !border !border-white/10 !rounded-xl !shadow-2xl overflow-hidden [&_.react-flow\_\_controls-button]:!bg-[#1e1e24] [&_.react-flow\_\_controls-button]:!border-b [&_.react-flow\_\_controls-button]:!border-white/10 [&_.react-flow\_\_controls-button]:!fill-slate-200 [&_.react-flow\_\_controls-button]:!text-slate-200 [&_.react-flow\_\_controls-button:hover]:!bg-[#2b2b36] [&_.react-flow\_\_controls-button:hover]:!fill-white [&_.react-flow\_\_controls-button:hover]:!text-white [&_.react-flow\_\_controls-button:last-child]:!border-b-0"
                   position="bottom-left"
                 />
               </ReactFlow>

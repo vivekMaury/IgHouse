@@ -586,8 +586,6 @@ export async function POST(request: NextRequest) {
               sender_username: senderUsername,
               sender_avatar_url: profile.avatarUrl,
               last_message: lastMessageText,
-              media_url: latestParsed.mediaUrl,
-              media_type: latestParsed.mediaType,
               updated_at: latestTime,
             },
             {

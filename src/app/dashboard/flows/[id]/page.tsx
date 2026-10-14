@@ -197,10 +197,11 @@ export default function FlowCanvasPage({ params }: { params: { id: string } }) {
               onDragOver={onDragOver}
               nodeTypes={nodeTypes}
               fitView
-              className="bg-slate-50 dark:bg-slate-950"
+              colorMode="dark"
+              className="dark bg-slate-950"
             >
-              <Background color="#ccc" gap={16} />
-              <Controls className="bg-white dark:bg-slate-800 dark:text-white dark:border-slate-700 fill-slate-800 dark:fill-slate-200" />
+              <Background color="#334155" gap={16} />
+              <Controls className="!bg-[#1e1e24] !border !border-white/10 !rounded-xl !shadow-2xl overflow-hidden [&_.react-flow\_\_controls-button]:!bg-[#1e1e24] [&_.react-flow\_\_controls-button]:!border-b [&_.react-flow\_\_controls-button]:!border-white/10 [&_.react-flow\_\_controls-button]:!fill-slate-200 [&_.react-flow\_\_controls-button]:!text-slate-200 [&_.react-flow\_\_controls-button:hover]:!bg-[#2b2b36] [&_.react-flow\_\_controls-button:hover]:!fill-white [&_.react-flow\_\_controls-button:hover]:!text-white [&_.react-flow\_\_controls-button:last-child]:!border-b-0" />
             </ReactFlow>
           </ReactFlowProvider>
         </div>

@@ -80,7 +80,7 @@ export async function saveWorkflow({
   const payload = {
     workspace_id: effectiveWorkspaceId,
     name: name?.trim() || 'Untitled Workflow',
-    status: isPublished ? 'active' : 'draft',
+    status: isPublished ? 'published' : 'draft',
     is_active: isPublished,
     flow_data: normalizedFlowData,
     updated_at: new Date().toISOString(),
@@ -141,7 +141,7 @@ export async function updateWorkflowActiveStatus(id: string, isActive: boolean) 
     .from('workflows')
     .update({
       is_active: isActive,
-      status: isActive ? 'active' : 'draft',
+      status: isActive ? 'published' : 'draft',
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)

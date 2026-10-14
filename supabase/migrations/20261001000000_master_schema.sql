@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS public.workflows (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
     name TEXT NOT NULL DEFAULT 'Untitled Workflow',
-    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'active')),
     flow_data JSONB NOT NULL DEFAULT '{"nodes": [], "edges": []}'::jsonb,
     execution_count BIGINT NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT false,

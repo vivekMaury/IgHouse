@@ -24,14 +24,27 @@ function buildAuthorizationUrl(request: NextRequest, appId: string, state: strin
   const authorizationUrl = new URL(
     `https://www.facebook.com/${graphApiVersion}/dialog/oauth`,
   );
-  authorizationUrl.search = new URLSearchParams({
+
+  const userAgent = request.headers.get("user-agent")?.toLowerCase() ?? "";
+  const isMobile = /iphone|ipad|ipod|android|mobile|touch/.test(userAgent);
+
+  const searchParams: Record<string, string> = {
     client_id: appId,
     redirect_uri: callbackUrl.toString(),
     response_type: "code",
     scope: permissions.join(","),
     state,
-  }).toString();
+    return_scopes: "true",
+    display: isMobile ? "touch" : "page",
+  };
 
+  // Only pass auth_type if explicitly requested (e.g., 'rerequest'). Never force 'reauthenticate'.
+  const authType = request.nextUrl.searchParams.get("auth_type");
+  if (authType === "rerequest") {
+    searchParams.auth_type = "rerequest";
+  }
+
+  authorizationUrl.search = new URLSearchParams(searchParams).toString();
   return authorizationUrl;
 }
 
@@ -70,7 +83,12 @@ export async function GET(request: NextRequest) {
     const state = randomBytes(32).toString("hex");
     const authorizationUrl = buildAuthorizationUrl(request, appId, state);
     const response = wantsJson
-      ? NextResponse.json({ url: authorizationUrl.toString() })
+      ? NextResponse.json({
+          appId: appId.trim(),
+          version: graphApiVersion,
+          permissions,
+          url: authorizationUrl.toString(),
+        })
       : NextResponse.redirect(authorizationUrl);
 
     response.cookies.set(stateCookieName, state, {

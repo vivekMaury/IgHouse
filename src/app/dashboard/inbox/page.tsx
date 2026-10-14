@@ -31,7 +31,7 @@ export default async function InboxPage() {
     // 1. Try querying conversations table
     const { data: convData } = await supabase
       .from("conversations")
-      .select("id, workspace_id, instagram_conversation_id, sender_id, sender_name, sender_username, sender_avatar_url, last_message, media_url, media_type, updated_at, created_at")
+      .select("id, workspace_id, instagram_conversation_id, sender_id, sender_name, sender_username, sender_avatar_url, last_message, updated_at, created_at")
       .order("updated_at", { ascending: false, nullsFirst: false });
 
     if (Array.isArray(convData) && convData.length > 0) {
@@ -55,8 +55,8 @@ export default async function InboxPage() {
           sender_username: conv.sender_username ?? null,
           sender_avatar_url: conv.sender_avatar_url ?? null,
           last_message: conv.last_message ?? null,
-          media_url: conv.media_url ?? null,
-          media_type: conv.media_type ?? null,
+          media_url: (conv as any).media_url ?? null,
+          media_type: (conv as any).media_type ?? null,
           username: displayName,
           tags: [],
           last_interaction_at: conv.updated_at || conv.created_at,
@@ -141,28 +141,31 @@ export default async function InboxPage() {
         // 2. Fallback to conversations table
         const { data: messages, error: fallbackError } = await supabase
           .from("conversations")
-          .select("id, contact_id, direction, message_body, message_text, media_url, media_type, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, created_at")
+          .select("id, contact_id, direction, message_body, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, created_at")
           .or(`contact_id.eq.${firstContact.id},id.eq.${firstContact.id}`)
           .order("created_at", { ascending: true });
-        if (fallbackError) throw fallbackError;
 
-        initialMessages = (messages ?? []).map((message) => {
-          const raw = message.message_text ?? message.message_body ?? "";
-          const cleanBody =
-            raw && raw !== "[Instagram message]"
-              ? raw
-              : message.media_url
-              ? ""
-              : message.direction === "outbound"
-              ? "Message sent via Instagram"
-              : "[Photo/Media]";
+        if (!fallbackError && Array.isArray(messages)) {
+          initialMessages = messages.map((message) => {
+            const raw = (message as any).message_text ?? message.message_body ?? "";
+            const cleanBody =
+              raw && raw !== "[Instagram message]"
+                ? raw
+                : message.direction === "outbound"
+                ? "Message sent via Instagram"
+                : "[Photo/Media]";
 
-          return {
-            ...message,
-            direction: message.direction === "outbound" ? "outbound" : "inbound",
-            message_body: cleanBody,
-          };
-        });
+            return {
+              ...message,
+              direction: message.direction === "outbound" ? "outbound" : "inbound",
+              message_body: cleanBody,
+              media_url: null,
+              media_type: null,
+            };
+          });
+        } else if (fallbackError) {
+          console.warn("Could not load fallback messages from conversations table:", fallbackError.message);
+        }
       }
     } catch (error) {
       console.error("Live Inbox messages could not be loaded.", error);

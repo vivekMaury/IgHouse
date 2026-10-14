@@ -152,15 +152,13 @@ export default function LiveInboxClient({
       // 3. Fallback for conversations table (seamless backward compatibility)
       const { data: fallbackData, error: fallbackError } = await supabase
         .from("conversations")
-        .select("id, contact_id, direction, message_body, message_text, media_url, media_type, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, metadata, created_at")
+        .select("id, contact_id, direction, message_body, sender_id, sender_name, sender_username, sender_avatar_url, is_from_user, metadata, created_at")
         .or(`contact_id.eq.${resolvedConversationId},id.eq.${resolvedConversationId}`)
         .order("created_at", { ascending: true });
 
       if (fallbackError) {
-        console.error("Supabase legacy conversation query error in LiveInboxClient:", {
+        console.warn("Supabase legacy conversation query in LiveInboxClient:", {
           message: fallbackError.message,
-          details: fallbackError.details,
-          hint: fallbackError.hint,
           code: fallbackError.code,
           conversation_id: resolvedConversationId,
         });
@@ -171,7 +169,7 @@ export default function LiveInboxClient({
       if (Array.isArray(fallbackData) && fallbackData.length > 0) {
         setMessages(
           fallbackData.map((message) => {
-            const raw = message.message_text ?? message.message_body ?? "";
+            const raw = (message as any).message_text ?? message.message_body ?? "";
             const metaText =
               message.metadata && typeof message.metadata === "object"
                 ? (message.metadata as Record<string, unknown>).text ??
@@ -182,7 +180,7 @@ export default function LiveInboxClient({
                 ? raw
                 : typeof metaText === "string" && metaText && metaText !== "[Instagram message]"
                 ? metaText
-                : message.media_url
+                : (message as any).media_url
                 ? ""
                 : message.direction === "outbound"
                 ? "Message sent via Instagram"
@@ -192,6 +190,8 @@ export default function LiveInboxClient({
               ...message,
               direction: message.direction === "outbound" ? "outbound" : "inbound",
               message_body: cleanBody,
+              media_url: (message as any).media_url ?? null,
+              media_type: (message as any).media_type ?? null,
             };
           }),
         );
@@ -214,7 +214,7 @@ export default function LiveInboxClient({
     try {
       let convQuery = supabase
         .from("conversations")
-        .select("id, workspace_id, instagram_conversation_id, sender_id, sender_name, sender_username, sender_avatar_url, last_message, media_url, media_type, updated_at, created_at")
+        .select("id, workspace_id, instagram_conversation_id, sender_id, sender_name, sender_username, sender_avatar_url, last_message, updated_at, created_at")
         .order("updated_at", { ascending: false, nullsFirst: false });
 
       if (workspaceId) {
@@ -243,8 +243,8 @@ export default function LiveInboxClient({
             sender_username: conv.sender_username,
             sender_avatar_url: conv.sender_avatar_url,
             last_message: conv.last_message,
-            media_url: conv.media_url,
-            media_type: conv.media_type,
+            media_url: (conv as any).media_url ?? null,
+            media_type: (conv as any).media_type ?? null,
             tags: [],
             last_interaction_at: conv.updated_at || conv.created_at,
           };

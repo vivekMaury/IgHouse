@@ -9,7 +9,7 @@ export default function FlowSidebar() {
   };
 
   return (
-    <aside className="w-64 border-l border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4 h-full overflow-y-auto">
+    <aside className="w-64 border-l border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4 h-full overflow-y-auto custom-scrollbar">
       <h3 className="font-semibold text-lg mb-4 text-slate-800 dark:text-slate-200">Nodes Palette</h3>
       
       <div className="flex flex-col gap-3">
