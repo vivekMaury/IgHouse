@@ -1578,7 +1578,7 @@ export default function LandingPage() {
                       <Link href="/data-deletion" className="text-pink-400 underline hover:text-pink-300">
                         Data Deletion page
                       </Link>{" "}
-                      or contacting vivekmaury555@gmail.com.
+                      or contacting info@ighouse.com.
                     </p>
                   </>
                 )}

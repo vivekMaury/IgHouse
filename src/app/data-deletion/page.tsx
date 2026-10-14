@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 };
 
 export default function DataDeletionPage() {
-  const supportEmail = "vivekmaury555@gmail.com";
+  const supportEmail = "info@ighouse.com";
   const mailtoLink = `mailto:${supportEmail}?subject=IgHouse%20Data%20Deletion%20Request&body=Hello%20IgHouse%20Team%2C%0A%0APlease%20permanently%20delete%20all%20data%20associated%20with%20my%20account%20from%20IgHouse%20and%20Supabase.%0A%0ARegistered%20Email%3A%20%0AInstagram%20Handle%3A%20%40%0AFacebook%20Page%20Name%20(if%20applicable)%3A%20%0A%0AThank%20you.`;
 
   return (

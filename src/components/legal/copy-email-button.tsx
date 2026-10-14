@@ -9,7 +9,7 @@ interface CopyEmailButtonProps {
 }
 
 export function CopyEmailButton({
-  email = "vivekmaury555@gmail.com",
+  email = "info@ighouse.com",
   className = "",
 }: CopyEmailButtonProps) {
   const [copied, setCopied] = useState(false);

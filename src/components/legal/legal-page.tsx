@@ -75,8 +75,8 @@ export function LegalPage({
         <footer className="mt-14 border-t border-white/10 pt-6 text-xs leading-6 text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-3">
           <span>
             Questions about these policies? Contact{" "}
-            <a className="font-medium text-pink-400 underline underline-offset-4 hover:text-pink-300" href="mailto:vivekmaury555@gmail.com">
-              vivekmaury555@gmail.com
+            <a className="font-medium text-pink-400 underline underline-offset-4 hover:text-pink-300" href="mailto:info@ighouse.com">
+              info@ighouse.com
             </a>
           </span>
           <span className="text-slate-600">&copy; {new Date().getFullYear()} IgHouse Inc.</span>

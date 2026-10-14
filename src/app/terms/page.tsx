@@ -16,13 +16,13 @@ import {
 import { CopyEmailButton } from "@/components/legal/copy-email-button";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | IgHouse",
+  title: "Terms and Conditions | IgHouse",
   description:
-    "Official Terms of Service for IgHouse Instagram DM Automation & CRM platform. Review user responsibilities, Meta compliance, and service terms.",
+    "Official Terms and Conditions & Terms of Service for IgHouse Instagram DM Automation & CRM platform. Review user responsibilities, Meta compliance, and service terms.",
 };
 
 export default function TermsOfServicePage() {
-  const supportEmail = "vivekmaury555@gmail.com";
+  const supportEmail = "info@ighouse.com";
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-pink-500/20 selection:text-pink-300 relative overflow-hidden">
