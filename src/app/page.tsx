@@ -1478,22 +1478,14 @@ export default function LandingPage() {
               <p className="text-xs font-bold text-white uppercase tracking-wider">Legal &amp; Trust</p>
               <ul className="space-y-2 text-xs">
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => setLegalModal("privacy")}
-                    className="hover:text-white transition-colors text-left"
-                  >
+                  <Link href="/privacy-policy" className="hover:text-white transition-colors">
                     Privacy Policy
-                  </button>
+                  </Link>
                 </li>
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => setLegalModal("terms")}
-                    className="hover:text-white transition-colors text-left"
-                  >
+                  <Link href="/terms" className="hover:text-white transition-colors">
                     Terms of Service
-                  </button>
+                  </Link>
                 </li>
                 <li>
                   <button
@@ -1506,12 +1498,7 @@ export default function LandingPage() {
                 </li>
                 <li>
                   <Link href="/data-deletion" className="hover:text-white transition-colors">
-                    Data Deletion Request
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/privacy-policy" className="hover:text-white transition-colors">
-                    Full Legal Hub
+                    Data Deletion Instructions
                   </Link>
                 </li>
               </ul>
@@ -1587,7 +1574,11 @@ export default function LandingPage() {
                     <h4 className="font-bold text-white pt-2">3. Data Deletion</h4>
                     <p>
                       You can disconnect your account and request complete deletion of all conversation logs and
-                      lead metrics at any time by visiting our Data Deletion page or contacting support@ighouse.com.
+                      lead metrics at any time by visiting our{" "}
+                      <Link href="/data-deletion" className="text-pink-400 underline hover:text-pink-300">
+                        Data Deletion page
+                      </Link>{" "}
+                      or contacting vivekmaury555@gmail.com.
                     </p>
                   </>
                 )}
@@ -1609,6 +1600,11 @@ export default function LandingPage() {
                       Paid plans are billed on a recurring monthly or annual basis. You may cancel your subscription
                       at any time directly from the account settings, after which you retain access until the end of
                       your billing cycle.
+                    </p>
+                    <p className="pt-2 text-xs">
+                      <Link href="/terms" className="text-pink-400 font-semibold underline hover:text-pink-300 inline-flex items-center gap-1">
+                        Read full Terms of Service document &rarr;
+                      </Link>
                     </p>
                   </>
                 )}
