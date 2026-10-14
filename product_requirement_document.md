@@ -1,158 +1,111 @@
 # Product Requirement Document (PRD) — IgHouse
 
+> **Notice:** This document is synchronized with the primary [PRD.md](file:///d:/IgHouse/PRD.md). For the executive summary, architecture, and feature roadmap, see below.
+
+**Document Version:** 2.0.0  
+**Status:** Approved for Production  
+**Product Name:** IgHouse  
+**Category:** Instagram Automation, Visual Workflow Canvas & Conversational CRM SaaS  
+**Last Updated:** October 2026  
+
+---
+
 ## 1. Executive Summary
-**IgHouse** is a high-end, 3D glassmorphic B2B SaaS platform for Instagram automation. It empowers creators, agencies, and e-commerce brands to turn Instagram comments and Direct Messages into automated lead generation and sales pipelines.
 
-Using Meta Graph API, Edge Functions, Next.js 14, Supabase, and React Flow, IgHouse provides a visual drag-and-drop node environment to build complex conditional logic, comment-to-DM triggers, and automated conversation flows.
+### 1.1 Vision
+**IgHouse** is a modern B2B SaaS platform for Instagram automation and lead generation. It enables creators, agencies, and e-commerce brands to turn Instagram comments, story mentions, and direct messages into automated, multi-step sales funnels.
 
----
-
-## 2. Core Vision & Objectives
-* **Primary Objective**: Provide an intuitive, low-latency, and visual automation builder that converts Instagram engagement (comments, story mentions, DMs) into measurable leads and sales.
-* **Target Audience**: Digital Marketers, E-Commerce Brand Owners, Content Creators, Agencies, and Social Media Managers.
-* **Core Differentiator**: Modern 3D Glassmorphic UI/UX, extremely low latency via Supabase Edge Functions, strict compliance with Meta Graph API 24-hour messaging window, and visual node-based execution canvas.
-
----
-
-## 3. Tech Stack & Architecture
-
-### Tech Stack
-* **Framework**: Next.js 14 (App Router, Server Actions, SSR)
-* **Language**: TypeScript
-* **Styling**: Tailwind CSS, Framer Motion (for 3D UI & Glassmorphic effects), Lucide React (Icons)
-* **Database & Auth**: Supabase (PostgreSQL with Row Level Security, Auth SSR Middleware, Storage)
-* **Visual Canvas**: `@xyflow/react` (React Flow)
-* **Backend Infrastructure**: Supabase Edge Functions (Deno / TypeScript) for webhook handling
-* **API Integration**: Meta Graph API (Instagram Messaging & Webhooks)
+### 1.2 Core Objectives
+- **Instant Response Engine**: Automated, sub-second responses to Instagram engagement.
+- **Visual Node Canvas**: Drag-and-drop workflow canvas built with `@xyflow/react` (React Flow) for designing conversation funnels, follow-gates, delays, and lead captures.
+- **Meta Policy Compliance**: Built exclusively on Meta's official Messenger API for Instagram with 24-hour messaging window enforcement, HMAC SHA-256 signature verification, and automated token lifecycle management.
+- **Live Inbox & CRM**: Unified real-time dashboard for monitoring conversations, contact tagging, and seamless human operator takeover.
+- **Asynchronous Scalability**: High-throughput queue architecture using Upstash Redis to absorb viral comment surges without timeout penalties.
 
 ---
 
-## 4. System Architecture & Workflows
+## 2. Technical Stack & Architecture
 
-### 4.1 High-Level Architecture Diagram
+- **Web Framework**: Next.js 14 (App Router, Server Actions, Route Handlers)
+- **Language**: TypeScript
+- **Styling**: Tailwind CSS, Framer Motion, Lucide React
+- **Canvas Library**: `@xyflow/react` (React Flow)
+- **Database & Auth**: Supabase PostgreSQL with Row Level Security (RLS), `@supabase/ssr` Auth
+- **Queue & Rate Limiting**: Upstash Redis (REST API) for sub-200ms webhook ingestion and FIFO queuing
+- **Worker Engine**: Next.js Cron Route (`/api/cron/process-webhooks`) & Supabase Edge Functions
+- **External APIs**: Meta Graph API (Instagram Messenger API v21.0+), Google Apps Script, Custom Webhooks
+- **Security**: Node.js `crypto` with `aes-256-gcm` for token encryption, HMAC SHA-256 webhook signature validation
+
+---
+
+## 3. Visual Workflow Builder Nodes
+
+The visual canvas supports 5 custom node types:
+
+1. ⚡ **Trigger Node (`trigger`)**:
+   - Supported triggers: `Comment Keyword`, `Story Mention`, `Direct DM`.
+   - Match criteria: `Contains`, `Exact Match`, `Starts With`, `All Comments`.
+
+2. 💬 **Message Node (`message` / `action`)**:
+   - Automated private DMs with dynamic variables (`{{username}}`).
+   - Public comment reply with randomized variations.
+   - Quick-reply chips and call-to-action buttons.
+
+3. 🔀 **Condition Node (`condition`)**:
+   - Branching logic: `Is User Following Page?` (Follow-gate), `Has Email Captured?`, `Has Specific Tag?`.
+   - Split outputs: `Yes` / `No`.
+
+4. ⏳ **Delay Node (`delay`)**:
+   - Configurable pauses (minutes or hours) before executing subsequent steps.
+
+5. 🎯 **Lead Capture Node (`lead_capture`)**:
+   - Regex-based extraction of email addresses and phone numbers from user messages.
+   - Direct persistence to `captured_leads` table and immediate webhook/Google Sheets export.
+
+---
+
+## 4. Webhook Ingestion & Worker Pipeline
+
 ```
-[Instagram User]
-       │ (Comment / Story / DM)
-       ▼
-[Meta Graph API Webhook Engine]
+[Instagram Event] 
+       │ 
+       ▼ (Webhook POST)
+[/api/webhooks/instagram]
+  ├── Verify X-Hub-Signature-256 (HMAC SHA-256)
+  ├── Immediately LPUSH payload to Upstash Redis
+  └── Return 200 OK (< 200ms ACK)
        │
-       ▼
-[Supabase Edge Function: /instagram-webhook]
-   ├── 1. Signature Verification (`X-Hub-Signature-256`)
-   ├── 2. Workspace & Active Flow Lookup (JSON Matching)
-   ├── 3. 24-Hour Window Validation
-   └── 4. Send Graph API Response (DM / Quick Reply)
-       │
-       ▼
-[IgHouse Supabase DB] ──► [Next.js 14 Live Dashboard Canvas]
-```
-
-### 4.2 Database Schema Architecture
-
-#### Workspaces Table (`workspaces`)
-```sql
-CREATE TABLE workspaces (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  owner_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  instagram_account_id TEXT UNIQUE,
-  instagram_access_token TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-#### Workflows Table (`workflows`)
-```sql
-CREATE TABLE workflows (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  trigger_type TEXT NOT NULL, -- 'comment_keyword', 'story_mention', 'direct_dm'
-  status TEXT DEFAULT 'draft', -- 'draft', 'active', 'paused'
-  flow_data JSONB NOT NULL,    -- React Flow Canvas State (Nodes & Edges)
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-#### Automation Logs Table (`automation_logs`)
-```sql
-CREATE TABLE automation_logs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
-  workflow_id UUID REFERENCES workflows(id) ON DELETE SET NULL,
-  recipient_instagram_id TEXT NOT NULL,
-  status TEXT NOT NULL, -- 'sent', 'failed', 'rate_limited'
-  message_payload JSONB,
-  error_message TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+       ▼ (Cron / Asynchronous Worker)
+[/api/cron/process-webhooks]
+  ├── RPOP batch from Upstash Redis
+  ├── Deduplicate via Redis TTL
+  ├── Rate limit per sender
+  ├── Execute Workflow Engine (src/lib/workflow-engine.ts)
+  └── Dispatch Meta Graph API DMs / Replies
 ```
 
 ---
 
-## 5. Feature Requirements & Modules
+## 5. Live Inbox & Human Takeover Protocol
 
-### Phase 1: Authentication & Landing Experience
-* **3D Glassmorphic Auth Page**: Combined landing page with dynamic 3D card tilt effects using Framer Motion.
-* **Supabase SSR Auth Integration**: Login, Signup, and Password Reset capabilities using `@supabase/ssr`.
-* **Password Visibility Toggle**: Interactive `Eye`/`EyeOff` icons for secure password entry.
-* **Email Reset Flow**: Automated reset token links sent via Supabase Auth service.
-
-### Phase 2: Dashboard & Workspaces
-* **Responsive Sidebar & Mobile Drawer**: Collapsible menu adaptive across desktop, tablet, and smartphone screens.
-* **Metrics Overview**:
-  * Total DMs Sent
-  * Comments Processed
-  * Conversion Rate %
-  * Active Automations Count
-* **Account Connection**: Meta OAuth integration to connect Facebook Pages and associated Instagram Business Accounts.
-
-### Phase 3: Visual Flow Builder (`/dashboard/flows/new`)
-* **React Flow Canvas**: Infinite grid with zoom controls, mini-map, and drag-and-drop palette.
-* **Custom Node Types**:
-  1. ⚡ **Trigger Node**: Fires on specific triggers (`Comment Keyword`, `Story Mention`, `Direct DM`).
-  2. 💬 **Message Node**: Handles text responses, dynamic quick replies, and CTA buttons.
-  3. 🔀 **Condition Node**: Branching logic (`Is User Following Page?`, `Has Email Captured?`).
-  4. ⏳ **Delay Node**: Configurable wait period (minutes/hours) before executing next step.
-* **Flow Serialization**: Full Canvas state (Nodes, Edges, Custom Form Configs) saved directly into Supabase `workflows` table as `JSONB`.
-
-### Phase 4: Meta Webhook & Edge Automation Engine
-* **Verification Endpoint (`GET`)**: Handles Meta webhook challenge verification token (`hub.verify_token`).
-* **Event Listener (`POST`)**:
-  * Real-time listener for incoming Instagram comments and messages.
-  * Validates Meta request headers using HMAC SHA256 signature verification.
-  * Checks active flow JSON schemas to evaluate conditional paths and automatically dispatch DMs via Meta Graph API.
-* **Compliance Safeguard**: Enforces 24-hour response window logic mandated by Meta Policy.
+- **Conversation List**: Real-time list of all active Instagram chats with latest messages and unread badges.
+- **Realtime Chat View**: Subscribes to Supabase Realtime on `messages` table.
+- **Human Takeover**: Operator can send manual messages; marks conversation with human flag to prevent automated collision.
+- **Lead Profile & Tagging**: Displays contact metadata, captured phone/email, and tags (`#HotLead`, `#Customer`).
 
 ---
 
-## 6. Non-Functional Requirements
+## 6. Development Status & Roadmap
 
-### Performance & Latency
-* Webhook response processing time under **500ms** via Edge Functions.
-* Next.js pages optimized for Web Vitals (LCP < 1.5s, CLS < 0.05).
-
-### Security
-* Row Level Security (RLS) enabled on all Supabase tables.
-* Access tokens encrypted in the database.
-* Meta App Secret and API tokens stored strictly in backend environment variables.
-
-### Responsiveness
-* 100% Mobile-first responsive layout (Tailwind CSS breakpoints `sm`, `md`, `lg`, `xl`).
-
----
-
-## 7. Development Roadmap
-
-| Phase | Description | Status |
+| Milestone | Deliverables | Status |
 | :--- | :--- | :--- |
-| **Phase 1** | Project Setup, Supabase Auth, 3D Landing Page | ✅ Completed |
-| **Phase 2.1** | Dashboard Layout & Analytics Overview UI | ✅ Completed |
-| **Phase 2.2** | React Flow Canvas Setup & Custom Node Palette | ✅ Completed |
-| **Phase 2.3** | Custom Node Components (Trigger, Message, Condition, Delay) | 🔄 In Progress |
-| **Phase 2.4** | Canvas Flow State Serialization & Supabase DB Integration | ⏳ Next Up |
-| **Phase 3.1** | Meta Developer App & Webhook Setup | ⏳ Scheduled |
-| **Phase 3.2** | Supabase Edge Function Engine (`instagram-webhook`) | ⏳ Scheduled |
-| **Phase 4** | End-to-End Testing & Production Deployment | ⏳ Scheduled |
+| **Milestone 1** | Next.js 14 App Router, Supabase Auth SSR, Landing Page & 3D Glassmorphic UI | ✅ Complete |
+| **Milestone 2** | Supabase Master SQL Schema with RLS, Workspaces, Connected Accounts, Contacts | ✅ Complete |
+| **Milestone 3** | React Flow Canvas Setup, Node Drag & Drop Palette, Workflow CRUD Server Actions | ✅ Complete |
+| **Milestone 4** | Custom Canvas Node System (`TriggerNode`, `MessageNode`, `ConditionNode`, `DelayNode`, `LeadCaptureNode`) | ✅ Complete |
+| **Milestone 5** | Meta Webhook Ingestion (`/api/webhooks/instagram`), HMAC SHA-256 Verification, Upstash Redis Queue | ✅ Complete |
+| **Milestone 6** | Workflow Evaluation Engine (`src/lib/workflow-engine.ts`) with Token Decryption & Auto-Refresh | ✅ Complete |
+| **Milestone 7** | Live Inbox UI with Realtime Chat, Contact Directory, and Manual Outbound DM Engine | ✅ Complete |
+| **Milestone 8** | Lead Export Integrations (Custom Webhooks & Google Apps Script / Google Sheets) | ✅ Complete |
+| **Milestone 9** | Meta Compliance, Legal Pages (`/privacy`, `/terms`, `/data-deletion`), and App Review Audit | ✅ Complete |
+| **Milestone 10** | SaaS Billing Engine (Stripe/Razorpay subscription integration) & AI Setter Agents (LLM) | 🔄 Next Up |
