@@ -339,6 +339,8 @@ export async function POST(request: NextRequest) {
       direction: "outbound",
       message_body: messageText,
       message_text: messageText,
+      media_url: insertedMessage?.media_url ?? null,
+      media_type: insertedMessage?.media_type ?? null,
       sender_id: senderId,
       is_from_user: true,
       created_at: sentAt,

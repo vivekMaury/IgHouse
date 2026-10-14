@@ -63,8 +63,13 @@ export default function LoginPage() {
     setResetFeedback(null)
 
     try {
+      const redirectUrl =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}/auth/reset-password`
+          : 'https://ighouse.app/auth/reset-password'
+
       const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-        redirectTo: 'http://localhost:3000/auth/reset-password',
+        redirectTo: redirectUrl,
       })
 
       if (error) {

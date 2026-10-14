@@ -38,7 +38,7 @@ export default function SignupPage() {
       if (authData.user) {
         const { data: workspaceData, error: workspaceError } = await supabase
           .from('workspaces')
-          .insert([{ name: workspaceName }])
+          .insert([{ name: workspaceName.trim() || 'My Workspace', owner_id: authData.user.id }])
           .select()
           .single()
 
